@@ -2,6 +2,8 @@ name: Build and Release OpenHydro
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
   workflow_dispatch:
@@ -132,3 +134,4 @@ jobs:
           draft: false
           prerelease: false
           generate_release_notes: true
+

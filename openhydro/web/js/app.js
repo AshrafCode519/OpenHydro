@@ -968,12 +968,20 @@ async function openExtensionModal() {
   const pathDisplay = document.getElementById('extension-folder-path');
   try {
     const res = await fetch('/api/extension/info');
-    const data = await res.json();
-    cachedExtensionPath = data.path;
-    pathDisplay.innerText = data.path;
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.path) {
+        cachedExtensionPath = data.path;
+        pathDisplay.innerText = data.path;
+        return;
+      }
+    }
   } catch (e) {
-    pathDisplay.innerText = 'openhydro/extension';
+    console.warn('Could not fetch extension info:', e);
   }
+  // Fallback to relative or current folder
+  cachedExtensionPath = 'openhydro/extension';
+  pathDisplay.innerText = 'openhydro/extension';
 }
 
 function closeExtensionModal() {
@@ -983,14 +991,17 @@ function closeExtensionModal() {
 async function openExtensionFolderInExplorer() {
   try {
     const res = await fetch('/api/extension/open_folder', { method: 'POST' });
-    const data = await res.json();
-    if (data.status === 'success') {
-      showToast('📂 تم فتح مجلد الإضافة في مستكشف الملفات بنجاح!', 'success');
-    } else {
-      showToast('تعذر فتح المجلد تلقائياً: ' + data.message, 'warning');
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.status === 'success') {
+        showToast('📂 تم فتح مجلد الإضافة في مستكشف الملفات بنجاح!', 'success');
+        return;
+      }
     }
+    const errData = await res.json().catch(() => ({}));
+    showToast('تعذر فتح المجلد تلقائياً: ' + (errData.message || errData.detail || 'يرجى فتح المجلد يدوياً'), 'warning');
   } catch (e) {
-    showToast('حدث خطأ: ' + e, 'error');
+    showToast('حدث خطأ أثناء فتح المجلد: ' + e, 'error');
   }
 }
 

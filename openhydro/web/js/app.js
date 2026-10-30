@@ -48,6 +48,94 @@ function getCategoryIcon(cat) {
   }
 }
 
+// --- Modern Toast & Notification System (Replaces ugly browser alert) ---
+function showToast(message, type = 'success', duration = 3500) {
+  let container = document.getElementById('openhydro-toast-container');
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'openhydro-toast-container';
+    document.body.appendChild(container);
+  }
+
+  const toast = document.createElement('div');
+  toast.className = `app-toast app-toast-${type}`;
+
+  let icon = '⚡';
+  if (type === 'success') icon = '✓';
+  else if (type === 'error') icon = '⚠️';
+  else if (type === 'info') icon = 'ℹ️';
+  else if (type === 'warning') icon = '🔔';
+
+  toast.innerHTML = `
+    <div class="flex items-center gap-3 overflow-hidden">
+      <span class="app-toast-icon">${icon}</span>
+      <span class="truncate text-right leading-snug">${message}</span>
+    </div>
+    <button class="app-toast-close" title="إغلاق">✕</button>
+  `;
+
+  const closeBtn = toast.querySelector('.app-toast-close');
+  const dismiss = () => {
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateY(-15px) scale(0.95)';
+    setTimeout(() => toast.remove(), 250);
+  };
+
+  closeBtn.addEventListener('click', dismiss);
+  container.appendChild(toast);
+
+  setTimeout(dismiss, duration);
+}
+
+// Override default window.alert globally
+window.alert = function (msg) {
+  showToast(msg, 'info');
+};
+
+// --- Modern Confirmation Modal System (Replaces ugly browser confirm) ---
+let confirmCallback = null;
+
+function showConfirm({ title = 'تأكيد الإجراء', message = 'هل أنت متأكد؟', okText = 'تأكيد', cancelText = 'إلغاء', onOk = null, isDanger = true }) {
+  const modal = document.getElementById('app-confirm-modal');
+  if (!modal) {
+    if (confirm(message)) onOk?.();
+    return;
+  }
+
+  document.getElementById('confirm-modal-title').innerText = title;
+  document.getElementById('confirm-modal-msg').innerText = message;
+
+  const okBtn = document.getElementById('confirm-modal-ok');
+  const cancelBtn = document.getElementById('confirm-modal-cancel');
+
+  okBtn.innerText = okText;
+  cancelBtn.innerText = cancelText;
+
+  confirmCallback = onOk;
+  modal.classList.remove('hidden');
+}
+
+function closeConfirmModal() {
+  const modal = document.getElementById('app-confirm-modal');
+  if (modal) modal.classList.add('hidden');
+  confirmCallback = null;
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const okBtn = document.getElementById('confirm-modal-ok');
+  const cancelBtn = document.getElementById('confirm-modal-cancel');
+  if (okBtn) {
+    okBtn.addEventListener('click', () => {
+      const cb = confirmCallback;
+      closeConfirmModal();
+      if (cb) cb();
+    });
+  }
+  if (cancelBtn) {
+    cancelBtn.addEventListener('click', closeConfirmModal);
+  }
+});
+
 // WebSocket Connection
 function initWebSocket() {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -334,15 +422,23 @@ async function resumeTask(id) {
 }
 
 async function deleteTask(id) {
-  if (!confirm('هل تريد بالتأكيد حذف هذا التنزيل؟')) return;
-  try {
-    await fetch(`/api/tasks/${id}?delete_file=true`, { method: 'DELETE' });
-    delete tasks[id];
-    renderTasks();
-    updateGlobalStats();
-  } catch (e) {
-    console.error(e);
-  }
+  showConfirm({
+    title: 'تأكيد حذف التنزيل',
+    message: 'هل تريد بالتأكيد إزالة هذا التنزيل من القائمة؟',
+    okText: 'نعم، حذف',
+    cancelText: 'إلغاء',
+    onOk: async () => {
+      try {
+        await fetch(`/api/tasks/${id}?delete_file=true`, { method: 'DELETE' });
+        delete tasks[id];
+        renderTasks();
+        updateGlobalStats();
+        showToast('تم حذف التنزيل بنجاح', 'info');
+      } catch (e) {
+        showToast('فشل حذف التنزيل: ' + e, 'error');
+      }
+    }
+  });
 }
 
 async function pauseAllTasks() {
@@ -543,7 +639,7 @@ async function submitNewTask() {
   const formatId = (!qualityContainer.classList.contains('hidden') && qualitySelect) ? qualitySelect.value : null;
 
   if (!url) {
-    alert('يرجى إدخال رابط صالح');
+    showToast('يرجى إدخال رابط صالح', 'warning');
     return;
   }
 
@@ -564,8 +660,9 @@ async function submitNewTask() {
     closeAddModal();
     renderTasks();
     updateGlobalStats();
+    showToast(`⚡ تم بدء تنزيل [${data.filename}] بنجاح!`, 'success');
   } catch (e) {
-    alert('حدث خطأ أثناء إضافة التنزيل: ' + e);
+    showToast('حدث خطأ أثناء إضافة التنزيل: ' + e, 'error');
   }
 }
 
@@ -591,7 +688,7 @@ async function submitRefreshUrl() {
   const newUrl = document.getElementById('refresh-url-input').value.trim();
 
   if (!newUrl || (!newUrl.startsWith('http://') && !newUrl.startsWith('https://'))) {
-    alert('يرجى إدخال رابط صالح يبدأ بـ http:// أو https://');
+    showToast('يرجى إدخال رابط صالح يبدأ بـ http:// أو https://', 'warning');
     return;
   }
 
@@ -605,11 +702,12 @@ async function submitRefreshUrl() {
       if (tasks[taskId]) tasks[taskId].url = newUrl;
       closeRefreshModal();
       renderTasks();
+      showToast('⚡ تم تحديث رابط التنزيل بنجاح!', 'success');
     } else {
-      alert('فشل تحديث الرابط');
+      showToast('فشل تحديث الرابط', 'error');
     }
   } catch (e) {
-    alert('حدث خطأ: ' + e);
+    showToast('حدث خطأ: ' + e, 'error');
   }
 }
 
@@ -653,10 +751,10 @@ async function saveSchedulerSettings() {
     });
     if (res.ok) {
       closeSchedulerModal();
-      alert('تم حفظ إعدادات الجدولة والطوابير بنجاح!');
+      showToast('⚡ تم حفظ إعدادات الجدولة والطوابير بنجاح!', 'success');
     }
   } catch (e) {
-    alert('حدث خطأ أثناء حفظ الجدولة: ' + e);
+    showToast('حدث خطأ أثناء حفظ الجدولة: ' + e, 'error');
   }
 }
 
@@ -722,7 +820,7 @@ function closePlaylistModal() {
 async function probePlaylistUrl() {
   const url = document.getElementById('playlist-url-input').value.trim();
   if (!url || !url.startsWith('http')) {
-    alert('يرجى إدخال رابط قائمة تشغيل صالح');
+    showToast('يرجى إدخال رابط قائمة تشغيل صالح', 'warning');
     return;
   }
 
@@ -758,8 +856,9 @@ async function probePlaylistUrl() {
     submitBtn.disabled = false;
     updatePlaylistSubmitButtonText();
     lucide.createIcons();
+    showToast(`⚡ تم فحص القائمة بنجاح! تم العثور على ${data.count} مقطع.`, 'success');
   } catch (e) {
-    alert(`خطأ أثناء فحص القائمة: ${e.message}`);
+    showToast(`خطأ أثناء فحص القائمة: ${e.message}`, 'error');
   } finally {
     spinner.classList.add('hidden');
   }
@@ -811,7 +910,7 @@ async function submitPlaylistDownload() {
 
   const checkboxes = document.querySelectorAll('.playlist-item-checkbox:checked');
   if (checkboxes.length === 0) {
-    alert('يرجى تحديد مقطع واحد على الأقل للتحميل');
+    showToast('يرجى تحديد مقطع واحد على الأقل للتحميل', 'warning');
     return;
   }
 
@@ -843,12 +942,12 @@ async function submitPlaylistDownload() {
     if (data.status === 'success') {
       closePlaylistModal();
       await fetchTasks();
-      alert(`⚡ تم إدراج ${data.enqueued_count} مقطع بنجاح في طابور التحميل الذكي!\nسيتم حفظها في المجلد:\n${data.folder}`);
+      showToast(`⚡ تم إدراج ${data.enqueued_count} مقطع بنجاح في طابور التحميل الذكي!`, 'success', 5000);
     } else {
-      alert('حدث خطأ أثناء جدولة قائمة التشغيل');
+      showToast('حدث خطأ أثناء جدولة قائمة التشغيل', 'error');
     }
   } catch (e) {
-    alert(`فشل التحميل: ${e.message}`);
+    showToast(`فشل التحميل: ${e.message}`, 'error');
   } finally {
     submitBtn.disabled = false;
     submitBtn.innerHTML = `<i data-lucide="download" class="w-4 h-4"></i><span id="playlist-submit-btn-text">تحميل المقاطع المحددة</span>`;

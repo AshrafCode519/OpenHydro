@@ -1,0 +1,134 @@
+name: Build and Release OpenHydro
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build Windows (Installer & Portable)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build Executable with PyInstaller
+        run: |
+          pyinstaller --clean --noconfirm openhydro.spec
+
+      - name: Compile Windows Setup Installer with Inno Setup
+        uses: Minionguyjpro/Inno-Setup-Action@v1.2.2
+        with:
+          path: installer.iss
+
+      - name: Create Portable Zip Package
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "dist/OpenHydro/*" -DestinationPath "OpenHydro-windows-x64-portable.zip" -Force
+
+      - name: Upload Windows Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release
+          path: |
+            dist_installer/*.exe
+            OpenHydro-windows-x64-portable.zip
+
+  build-linux:
+    name: Build Linux Portable Package
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg libwebkit2gtk-4.0-dev
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build Standalone Binary with PyInstaller
+        run: |
+          pyinstaller --noconfirm --onedir --name OpenHydro \
+            --add-data "openhydro/web:openhydro/web" \
+            --add-data "openhydro/extension:openhydro/extension" \
+            --add-data "assets:assets" \
+            --hidden-import "uvicorn" \
+            --hidden-import "fastapi" \
+            --hidden-import "starlette" \
+            --hidden-import "h11" \
+            --hidden-import "websockets" \
+            --hidden-import "curl_cffi" \
+            --hidden-import "youtube_transcript_api" \
+            run.py
+
+      - name: Package Linux Tarball
+        run: |
+          cp openhydro.sh dist/OpenHydro/
+          cp openhydro.desktop dist/OpenHydro/
+          chmod +x dist/OpenHydro/openhydro.sh
+          cd dist
+          tar -czvf ../OpenHydro-linux-x86_64.tar.gz OpenHydro
+
+      - name: Upload Linux Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-release
+          path: OpenHydro-linux-x86_64.tar.gz
+
+  create-release:
+    name: Publish GitHub Release
+    needs: [build-windows, build-linux]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Download Windows Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-release
+          path: release-files/
+
+      - name: Download Linux Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-release
+          path: release-files/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-files/*
+          draft: false
+          prerelease: false
+          generate_release_notes: true

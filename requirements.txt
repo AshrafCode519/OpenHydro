@@ -1,0 +1,12 @@
+# OpenHydro - Core Dependencies
+fastapi>=0.100.0
+uvicorn>=0.20.0
+httpx>=0.24.0
+pywebview>=4.0.0
+aiofiles>=23.0.0
+websockets>=11.0
+pystray>=0.19.0
+pillow>=10.0.0
+yt-dlp>=2024.0.0
+curl-cffi>=0.17.0
+youtube-transcript-api>=1.2.0

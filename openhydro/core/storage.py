@@ -1,0 +1,162 @@
+"""
+OpenHydro Storage Manager
+Pre-allocation, file space management, resumption state persistence, and auto-discovery.
+"""
+
+import json
+import os
+import glob
+from typing import Optional, Dict, Any, List
+from .task import DownloadTask, Chunk, TaskStatus
+
+
+class StorageManager:
+    @staticmethod
+    def get_default_download_dir() -> str:
+        # Standard user downloads folder
+        home = os.path.expanduser("~")
+        downloads = os.path.join(home, "Downloads")
+        if not os.path.exists(downloads):
+            downloads = os.path.join(home, "OpenHydroDownloads")
+            os.makedirs(downloads, exist_ok=True)
+        return downloads
+
+    @staticmethod
+    def get_meta_path(target_path: str) -> str:
+        return target_path + ".hydro.meta"
+
+    @staticmethod
+    def get_part_path(target_path: str) -> str:
+        return target_path + ".hydro.part"
+
+    @classmethod
+    def preallocate_file(cls, filepath: str, total_bytes: int):
+        """
+        Pre-allocates the file on disk to guarantee continuous space and avoid fragmentation.
+        """
+        dir_path = os.path.dirname(filepath)
+        if dir_path and not os.path.exists(dir_path):
+            os.makedirs(dir_path, exist_ok=True)
+
+        # Open in binary write/update mode and set exact file size
+        mode = "r+b" if os.path.exists(filepath) else "w+b"
+        with open(filepath, mode) as f:
+            if total_bytes > 0:
+                f.truncate(total_bytes)
+                f.flush()
+
+    @classmethod
+    def save_task_meta(cls, task: DownloadTask):
+        """
+        Persists download metadata to allow pause/resume even across system reboots.
+        """
+        if not task.save_path:
+            return
+        meta_path = cls.get_meta_path(task.save_path)
+        try:
+            data = {
+                "id": task.id,
+                "url": task.url,
+                "filename": task.filename,
+                "save_path": task.save_path,
+                "total_bytes": task.total_bytes,
+                "supports_ranges": task.supports_ranges,
+                "num_connections": task.num_connections,
+                "status": task.status.value,
+                "category": task.category or task.determine_category(),
+                "custom_headers": task.custom_headers,
+                "referrer": task.referrer,
+                "chunks": [c.to_dict() for c in task.chunks],
+            }
+            with open(meta_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+        except Exception as e:
+            print(f"[StorageManager] Error saving task metadata: {e}")
+
+    @classmethod
+    def load_task_meta(cls, meta_path: str) -> Optional[DownloadTask]:
+        """
+        Loads task state from a given .hydro.meta file path.
+        """
+        if not os.path.exists(meta_path):
+            return None
+
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            task = DownloadTask(
+                url=data["url"],
+                filename=data["filename"],
+                save_path=data["save_path"],
+                id=data["id"],
+                total_bytes=data.get("total_bytes", 0),
+                supports_ranges=data.get("supports_ranges", False),
+                num_connections=data.get("num_connections", 8),
+                category=data.get("category") or "other",
+                custom_headers=data.get("custom_headers", {}),
+                referrer=data.get("referrer"),
+            )
+            task.category = task.determine_category()
+
+            # Reconstruct chunks
+            chunks = []
+            for cd in data.get("chunks", []):
+                chunk = Chunk(
+                    id=cd["id"],
+                    start_byte=cd["start_byte"],
+                    end_byte=cd["end_byte"],
+                    current_byte=cd["current_byte"],
+                    status="completed" if cd["status"] == "completed" or cd["current_byte"] > cd["end_byte"] else "idle",
+                )
+                chunks.append(chunk)
+            task.chunks = chunks
+
+            # Check if actual final file already exists
+            if os.path.exists(task.save_path) and not os.path.exists(cls.get_part_path(task.save_path)):
+                task.status = TaskStatus.COMPLETED
+            else:
+                task.status = TaskStatus.PAUSED
+
+            return task
+        except Exception as e:
+            print(f"[StorageManager] Error loading metadata from {meta_path}: {e}")
+            return None
+
+    @classmethod
+    def scan_and_load_tasks(cls, download_dir: str) -> List[DownloadTask]:
+        """
+        Scans download_dir for all .hydro.meta files and restores tasks so downloads persist.
+        """
+        restored = []
+        if not os.path.exists(download_dir):
+            return restored
+
+        pattern = os.path.join(download_dir, "*.hydro.meta")
+        for meta_file in glob.glob(pattern):
+            task = cls.load_task_meta(meta_file)
+            if task:
+                restored.append(task)
+        return restored
+
+    @classmethod
+    def finalize_download(cls, task: DownloadTask):
+        """
+        Renames .part file to final file and cleans up meta file.
+        """
+        part_path = cls.get_part_path(task.save_path)
+        meta_path = cls.get_meta_path(task.save_path)
+
+        if os.path.exists(part_path):
+            if os.path.exists(task.save_path):
+                try:
+                    os.remove(task.save_path)
+                except OSError:
+                    pass
+            os.rename(part_path, task.save_path)
+
+        if os.path.exists(meta_path):
+            try:
+                os.remove(meta_path)
+            except OSError:
+                pass

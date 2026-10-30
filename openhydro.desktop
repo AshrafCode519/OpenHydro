@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=OpenHydro
+GenericName=Download Manager
+Comment=Modern Ultra-Fast Dynamic Download Manager (IDM Alternative)
+Comment[ar]=مدير التنزيل العصري فائق السرعة
+Exec=bash -c "cd $(dirname %k) && ./openhydro.sh"
+Icon=openhydro
+Terminal=false
+Categories=Network;FileTransfer;
+StartupNotify=true
+Keywords=download;manager;idm;accelerator;video;youtube;

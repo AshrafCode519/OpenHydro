@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenHydro - مدير التنزيل العصري فائق السرعة</title>
+  <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+  <!-- Android & Mobile PWA Meta -->
+  <link rel="manifest" href="/static/manifest.json">
+  <meta name="theme-color" content="#0b0f19">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Lucide Icons CDN -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            hydro: {
+              50: '#ecfeff',
+              400: '#22d3ee',
+              500: '#06b6d4',
+              600: '#0891b2',
+              900: '#164e63',
+            }
+          }
+        }
+      }
+    }
+  </script>
+</head>
+<body class="bg-[#0b0f19] text-gray-100 min-h-screen flex flex-col overflow-hidden">
+  <div class="bg-mesh"></div>
+
+  <!-- Top Navigation Bar -->
+  <header class="h-16 border-b border-white/10 glass-panel flex items-center justify-between px-6 z-20">
+    <div class="flex items-center gap-4">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center glow-cyan">
+          <i data-lucide="zap" class="w-6 h-6 text-white fill-white"></i>
+        </div>
+        <div>
+          <h1 class="font-bold text-lg tracking-wider bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent">
+            OpenHydro
+          </h1>
+          <p class="text-xs text-gray-400">Next-Gen Dynamic Download Manager</p>
+        </div>
+      </div>
+
+      <!-- Live Speed Badge -->
+      <div class="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-full bg-cyan-950/40 border border-cyan-500/20 text-cyan-400 text-xs font-mono font-medium">
+        <i data-lucide="activity" class="w-3.5 h-3.5 animate-pulse"></i>
+        <span>السرعة الإجمالية:</span>
+        <span id="global-speed-display" class="font-bold">0.0 KB/s</span>
+      </div>
+    </div>
+
+    <!-- Center / Actions -->
+    <div class="flex items-center gap-3">
+      <!-- Add Download Button -->
+      <button onclick="openAddModal()" class="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-medium shadow-lg shadow-cyan-500/20 transition-all hover:scale-105 active:scale-95 text-sm">
+        <i data-lucide="plus-circle" class="w-4 h-4"></i>
+        <span>تنزيل جديد</span>
+      </button>
+
+      <!-- Playlist Download Button (Snaptube/Vidmate style) -->
+      <button onclick="openPlaylistModal()" title="تحميل قائمة تشغيل كاملة (YouTube Playlist)" class="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-medium shadow-lg shadow-purple-500/25 transition-all hover:scale-105 active:scale-95 text-xs">
+        <i data-lucide="list-music" class="w-4 h-4"></i>
+        <span>تحميل Playlist</span>
+      </button>
+
+      <!-- Scheduler & Queues Button -->
+      <button onclick="openSchedulerModal()" title="إدارة الطوابير والجدولة الذكية" class="flex items-center gap-2 px-3 py-2 rounded-xl glass-panel glass-panel-hover text-xs text-gray-300">
+        <i data-lucide="clock" class="w-4 h-4 text-purple-400"></i>
+        <span>الجدولة والطوابير</span>
+      </button>
+
+      <!-- Speed Limiter Quick Menu -->
+      <div class="relative group">
+        <button id="limiter-btn" class="flex items-center gap-2 px-3 py-2 rounded-xl glass-panel glass-panel-hover text-xs text-gray-300">
+          <i data-lucide="gauge" class="w-4 h-4 text-cyan-400"></i>
+          <span id="limiter-status-text">بدون تحديد</span>
+        </button>
+        <div class="absolute right-0 mt-2 w-48 glass-panel rounded-xl p-2 hidden group-hover:block shadow-xl border border-white/10 z-50">
+          <p class="text-[10px] text-gray-400 px-2 py-1 uppercase font-semibold">محدد السرعة الذكي</p>
+          <button onclick="setSpeedLimit(0)" class="w-full text-right px-2 py-1.5 rounded-lg text-xs hover:bg-white/5 flex justify-between items-center">
+            <span>أقصى سرعة (بدون تحديد)</span>
+            <i data-lucide="infinity" class="w-3.5 h-3.5 text-cyan-400"></i>
+          </button>
+          <button onclick="setSpeedLimit(500)" class="w-full text-right px-2 py-1.5 rounded-lg text-xs hover:bg-white/5">500 KB/s (للتصفح المريح)</button>
+          <button onclick="setSpeedLimit(2048)" class="w-full text-right px-2 py-1.5 rounded-lg text-xs hover:bg-white/5">2 MB/s (متوازن)</button>
+          <button onclick="setSpeedLimit(5120)" class="w-full text-right px-2 py-1.5 rounded-lg text-xs hover:bg-white/5">5 MB/s (سريع)</button>
+        </div>
+      </div>
+
+      <!-- Settings / System Info -->
+      <div class="flex items-center gap-2 text-xs text-gray-400 px-3 py-1.5 glass-panel rounded-xl">
+        <i data-lucide="hard-drive" class="w-4 h-4 text-blue-400"></i>
+        <span id="disk-free-display">القرص: جاري الحساب...</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Workspace -->
+  <div class="flex-1 flex overflow-hidden">
+    <!-- Sidebar -->
+    <aside class="w-64 border-l border-white/10 glass-panel flex flex-col p-4 gap-6 shrink-0">
+      <div>
+        <p class="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-2 px-2">الحالة والمهام</p>
+        <nav class="space-y-1">
+          <button onclick="setCategoryFilter('all')" class="category-btn w-full flex items-center justify-between px-3 py-2 rounded-xl text-sm font-medium bg-cyan-500/10 text-cyan-400 border border-cyan-500/20" data-cat="all">
+            <div class="flex items-center gap-2.5">
+              <i data-lucide="layers" class="w-4 h-4"></i>
+              <span>كافة التنزيلات</span>
+            </div>
+            <span id="count-all" class="text-xs px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 font-mono">0</span>
+          </button>
+
+          <button onclick="setCategoryFilter('downloading')" class="category-btn w-full flex items-center justify-between px-3 py-2 rounded-xl text-sm font-medium text-gray-300 hover:bg-white/5" data-cat="downloading">
+            <div class="flex items-center gap-2.5">
+              <i data-lucide="arrow-down-circle" class="w-4 h-4 text-blue-400"></i>
+              <span>قيد التنزيل</span>
+            </div>
+            <span id="count-downloading" class="text-xs px-2 py-0.5 rounded-full bg-white/10 font-mono">0</span>
+          </button>
+
+          <button onclick="setCategoryFilter('completed')" class="category-btn w-full flex items-center justify-between px-3 py-2 rounded-xl text-sm font-medium text-gray-300 hover:bg-white/5" data-cat="completed">
+            <div class="flex items-center gap-2.5">
+              <i data-lucide="check-circle" class="w-4 h-4 text-emerald-400"></i>
+              <span>المكتملة</span>
+            </div>
+            <span id="count-completed" class="text-xs px-2 py-0.5 rounded-full bg-white/10 font-mono">0</span>
+          </button>
+
+          <button onclick="setCategoryFilter('paused')" class="category-btn w-full flex items-center justify-between px-3 py-2 rounded-xl text-sm font-medium text-gray-300 hover:bg-white/5" data-cat="paused">
+            <div class="flex items-center gap-2.5">
+              <i data-lucide="pause-circle" class="w-4 h-4 text-amber-400"></i>
+              <span>المتوقفة مؤقتاً</span>
+            </div>
+            <span id="count-paused" class="text-xs px-2 py-0.5 rounded-full bg-white/10 font-mono">0</span>
+          </button>
+        </nav>
+      </div>
+
+      <!-- Categories -->
+      <div>
+        <p class="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-2 px-2">التصنيفات التلقائية</p>
+        <nav class="space-y-1">
+          <button onclick="setCategoryFilter('video')" class="category-btn w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm text-gray-300 hover:bg-white/5" data-cat="video">
+            <i data-lucide="video" class="w-4 h-4 text-rose-400"></i>
+            <span>فيديو</span>
+          </button>
+          <button onclick="setCategoryFilter('audio')" class="category-btn w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm text-gray-300 hover:bg-white/5" data-cat="audio">
+            <i data-lucide="music" class="w-4 h-4 text-purple-400"></i>
+            <span>صوت وموسيقى</span>
+          </button>
+          <button onclick="setCategoryFilter('compressed')" class="category-btn w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm text-gray-300 hover:bg-white/5" data-cat="compressed">
+            <i data-lucide="archive" class="w-4 h-4 text-yellow-400"></i>
+            <span>ملفات مضغوطة</span>
+          </button>
+          <button onclick="setCategoryFilter('document')" class="category-btn w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm text-gray-300 hover:bg-white/5" data-cat="document">
+            <i data-lucide="file-text" class="w-4 h-4 text-blue-400"></i>
+            <span>مستندات</span>
+          </button>
+          <button onclick="setCategoryFilter('program')" class="category-btn w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm text-gray-300 hover:bg-white/5" data-cat="program">
+            <i data-lucide="box" class="w-4 h-4 text-emerald-400"></i>
+            <span>برامج وتطبيقات</span>
+          </button>
+        </nav>
+      </div>
+
+      <!-- Drop Target Area -->
+      <div id="drop-zone" class="mt-auto p-4 rounded-2xl border-2 border-dashed border-cyan-500/30 bg-cyan-950/20 text-center flex flex-col items-center justify-center gap-2 transition-all hover:border-cyan-400">
+        <i data-lucide="download-cloud" class="w-8 h-8 text-cyan-400 animate-bounce"></i>
+        <p class="text-xs font-semibold text-gray-200">صندوق الإسقاط السريع</p>
+        <p class="text-[10px] text-gray-400">اسحب أي رابط أو ملف هنا للتحميل الفوري</p>
+      </div>
+    </aside>
+
+    <!-- Main Content List -->
+    <main class="flex-1 flex flex-col overflow-hidden bg-slate-950/40 p-6">
+      <!-- Toolbar / Search -->
+      <div class="flex items-center justify-between mb-4">
+        <div class="relative w-80">
+          <i data-lucide="search" class="w-4 h-4 absolute right-3 top-3 text-gray-400"></i>
+          <input type="text" id="search-input" oninput="renderTasks()" placeholder="بحث في قائمة التحميلات..." class="w-full pr-10 pl-4 py-2 rounded-xl glass-panel text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-cyan-500">
+        </div>
+
+        <div class="flex items-center gap-2">
+          <button onclick="resumeAllTasks()" class="px-3 py-1.5 rounded-lg glass-panel text-xs hover:bg-white/5 flex items-center gap-1.5 text-emerald-400">
+            <i data-lucide="play" class="w-3.5 h-3.5"></i>
+            <span>استئناف الكل</span>
+          </button>
+          <button onclick="pauseAllTasks()" class="px-3 py-1.5 rounded-lg glass-panel text-xs hover:bg-white/5 flex items-center gap-1.5 text-amber-400">
+            <i data-lucide="pause" class="w-3.5 h-3.5"></i>
+            <span>إيقاف الكل</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Downloads List Scroll Area -->
+      <div id="tasks-container" class="flex-1 overflow-y-auto space-y-3 pr-1">
+        <!-- Rendered dynamically by app.js -->
+        <div class="flex flex-col items-center justify-center h-64 text-gray-500 gap-3">
+          <i data-lucide="inbox" class="w-12 h-12 stroke-[1.5]"></i>
+          <p class="text-sm">لا توجد تنزيلات نشطة حالياً</p>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Add Download Modal -->
+  <div id="add-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center hidden">
+    <div class="glass-panel w-full max-w-lg rounded-2xl p-6 border border-white/10 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between border-b border-white/10 pb-3">
+        <div class="flex items-center gap-2 text-cyan-400 font-semibold">
+          <i data-lucide="download" class="w-5 h-5"></i>
+          <span>إضافة تنزيل جديد</span>
+        </div>
+        <button onclick="closeAddModal()" class="text-gray-400 hover:text-white">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <div class="space-y-3">
+        <div>
+          <label class="block text-xs font-semibold text-gray-300 mb-1">رابط التحميل (URL):</label>
+          <div class="relative">
+            <input type="text" id="modal-url-input" oninput="onUrlInputDebounced()" placeholder="https://example.com/file.zip" class="w-full px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-sm focus:outline-none focus:border-cyan-500">
+            <span id="modal-probe-spinner" class="absolute left-3 top-2.5 hidden">
+              <i data-lucide="loader-2" class="w-4 h-4 text-cyan-400 animate-spin"></i>
+            </span>
+          </div>
+        </div>
+
+        <!-- Playlist Detected Banner -->
+        <div id="modal-playlist-banner" class="hidden p-3 rounded-xl bg-purple-500/15 border border-purple-500/30 flex items-center justify-between text-xs">
+          <div class="flex items-center gap-2 text-purple-200">
+            <i data-lucide="list-music" class="w-4 h-4 text-purple-400 shrink-0"></i>
+            <span>تم اكتشاف قائمة تشغيل كاملة (Playlist)!</span>
+          </div>
+          <button onclick="switchToPlaylistModal()" class="px-2.5 py-1 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-[11px] font-semibold transition-all shadow-md">
+            فتح معالج القائمة
+          </button>
+        </div>
+
+        <!-- Probe Info Card -->
+        <div id="probe-info-card" class="hidden p-3 rounded-xl bg-white/5 border border-white/5 space-y-2 text-xs font-mono">
+          <div class="flex items-center gap-3">
+            <img id="probe-thumbnail" src="" class="w-20 h-14 object-cover rounded-lg border border-white/10 hidden shrink-0" alt="Thumbnail">
+            <div class="flex-1 min-w-0 space-y-1">
+              <div class="flex justify-between">
+                <span class="text-gray-400">اسم الملف / العنوان:</span>
+                <span id="probe-filename" class="text-gray-200 font-sans font-semibold truncate max-w-[240px]">file.zip</span>
+              </div>
+              <div class="flex justify-between">
+                <span class="text-gray-400">الحجم المقدر:</span>
+                <span id="probe-size" class="text-cyan-400 font-bold">--</span>
+              </div>
+              <div class="flex justify-between">
+                <span class="text-gray-400">النوع ومسارات التحميل:</span>
+                <span id="probe-ranges" class="text-emerald-400">نعم (Ranges Supported)</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Video Platform Quality, Audio & Subtitles Selector (YouTube, TikTok, Facebook, etc.) -->
+        <div id="video-quality-container" class="hidden">
+          <div class="flex items-center justify-between mb-1">
+            <label class="block text-xs font-semibold text-gray-300">نوع التحميل (فيديو / صوت / نص وترجمة):</label>
+            <span class="text-[11px] text-cyan-400 font-mono">🎬 Video • 🎵 Audio • 📝 Subtitles</span>
+          </div>
+          <select id="modal-quality-select" onchange="onQualityChanged()" class="w-full px-3 py-2 rounded-xl bg-slate-900 border border-cyan-500/40 text-sm focus:outline-none focus:border-cyan-400 text-cyan-300 font-medium">
+            <!-- Populated dynamically with optgroups -->
+          </select>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-semibold text-gray-300 mb-1">عدد مسارات التحميل بالتوازي:</label>
+            <select id="modal-connections-select" class="w-full px-3 py-2 rounded-xl bg-slate-900 border border-cyan-500/40 text-sm focus:outline-none focus:border-cyan-400 text-cyan-300 font-medium">
+              <option value="4">4 مسارات</option>
+              <option value="8">8 مسارات</option>
+              <option value="16">16 مسار (فائق السرعة)</option>
+              <option value="32" selected>32 مسار (أقصى سحب للنطاق الترددي - Maximum Turbo 🚀)</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-gray-300 mb-1">إعادة تسمية الملف (اختياري):</label>
+            <input type="text" id="modal-filename-input" placeholder="اسم الملف المخصص..." class="w-full px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-sm focus:outline-none focus:border-cyan-500">
+          </div>
+        </div>
+      </div>
+
+      <div class="flex justify-end gap-3 pt-3 border-t border-white/10">
+        <button onclick="closeAddModal()" class="px-4 py-2 rounded-xl text-sm text-gray-400 hover:text-white hover:bg-white/5">إلغاء</button>
+        <button onclick="submitNewTask()" class="px-5 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-medium text-sm flex items-center gap-2 shadow-lg shadow-cyan-500/20">
+          <i data-lucide="play" class="w-4 h-4 fill-white"></i>
+          <span>بدء التنزيل فوراً</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Full Playlist Downloader Modal (Snaptube / Vidmate Style) -->
+  <div id="playlist-modal" class="fixed inset-0 bg-black/75 backdrop-blur-md z-50 flex items-center justify-center hidden p-4">
+    <div class="glass-panel w-full max-w-2xl max-h-[90vh] rounded-2xl p-6 border border-white/10 shadow-2xl flex flex-col space-y-4">
+      <!-- Modal Header -->
+      <div class="flex items-center justify-between border-b border-white/10 pb-3">
+        <div class="flex items-center gap-2 text-purple-400 font-semibold text-base">
+          <i data-lucide="list-music" class="w-5 h-5"></i>
+          <span>تحميل قائمة تشغيل كاملة (Snaptube / Vidmate Style)</span>
+        </div>
+        <button onclick="closePlaylistModal()" class="text-gray-400 hover:text-white p-1 rounded-lg hover:bg-white/5 transition-all">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <!-- URL Input & Probe -->
+      <div class="space-y-2">
+        <label class="block text-xs font-semibold text-gray-300">رابط قائمة التشغيل (Playlist URL):</label>
+        <div class="flex gap-2">
+          <div class="relative flex-1">
+            <input type="text" id="playlist-url-input" placeholder="https://www.youtube.com/playlist?list=..." class="w-full px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-sm focus:outline-none focus:border-purple-500 text-gray-200">
+            <span id="playlist-probe-spinner" class="absolute left-3 top-2.5 hidden">
+              <i data-lucide="loader-2" class="w-4 h-4 text-purple-400 animate-spin"></i>
+            </span>
+          </div>
+          <button onclick="probePlaylistUrl()" class="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold shadow-lg shadow-purple-600/30 transition-all flex items-center gap-1.5 shrink-0">
+            <i data-lucide="search" class="w-3.5 h-3.5"></i>
+            <span>فحص القائمة</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Playlist Info Card -->
+      <div id="playlist-info-card" class="hidden p-3 rounded-xl bg-purple-950/20 border border-purple-500/20 space-y-3">
+        <div class="flex items-center justify-between">
+          <div class="min-w-0 flex-1">
+            <h4 id="playlist-title-display" class="font-bold text-sm text-purple-200 truncate">اسم قائمة التشغيل</h4>
+            <p id="playlist-meta-display" class="text-xs text-gray-400">القناة • عدد الفيديوهات: 0</p>
+          </div>
+          <div class="flex items-center gap-2 shrink-0">
+            <label class="text-xs text-gray-300 font-semibold">الدقة والصيغة:</label>
+            <select id="playlist-quality-select" class="px-2.5 py-1.5 rounded-lg bg-slate-900 border border-purple-500/40 text-xs text-purple-300 font-medium focus:outline-none">
+              <optgroup label="🎬 جودات الفيديو الموحدة">
+                <option value="bestvideo[height<=1080]+bestaudio/best">1080p FHD (عالي الدقة)</option>
+                <option value="bestvideo[height<=720]+bestaudio/best" selected>720p HD (موصى به - متوازن)</option>
+                <option value="bestvideo[height<=480]+bestaudio/best">480p SD (توفير مساحة)</option>
+                <option value="bestvideo[height<=360]+bestaudio/best">360p (دقة منخفضة)</option>
+              </optgroup>
+              <optgroup label="🎵 استخراج الصوت (Audio Only)">
+                <option value="audio_mp3">تحميل كألبوم صوتي MP3 (320 kbps)</option>
+                <option value="audio_m4a">تحميل كألبوم صوتي أصلي M4A</option>
+              </optgroup>
+              <optgroup label="📝 النصوص والترجمة">
+                <option value="subtitle_srt">ملفات الترجمة والنصوص (SRT)</option>
+                <option value="subtitle_txt">تفريغ النص بالكامل (TXT)</option>
+              </optgroup>
+            </select>
+          </div>
+        </div>
+
+        <!-- Selection toolbar -->
+        <div class="flex items-center justify-between border-t border-purple-500/10 pt-2 text-xs">
+          <div class="flex items-center gap-2">
+            <input type="checkbox" id="playlist-select-all" onchange="toggleSelectAllPlaylist(this.checked)" checked class="rounded bg-slate-900 border-white/20 text-purple-600 focus:ring-0 cursor-pointer">
+            <label for="playlist-select-all" class="text-gray-300 font-medium cursor-pointer">
+              تحديد الكل (<span id="playlist-selected-count">0</span> / <span id="playlist-total-count">0</span> مقطع)
+            </label>
+          </div>
+          <span class="text-[11px] text-gray-400">تُحفظ المقاطع مرتبة داخل مجلد باسم القائمة</span>
+        </div>
+      </div>
+
+      <!-- Videos Scrollable Checklist -->
+      <div id="playlist-items-container" class="flex-1 overflow-y-auto max-h-64 space-y-1.5 pr-1 hidden border border-white/5 rounded-xl p-2 bg-slate-950/40">
+        <!-- Dynamically populated video cards -->
+      </div>
+
+      <!-- Modal Footer -->
+      <div class="flex items-center justify-between border-t border-white/10 pt-3">
+        <button onclick="closePlaylistModal()" class="px-4 py-2 rounded-xl text-xs font-semibold text-gray-400 hover:text-white hover:bg-white/5 transition-all">
+          إلغاء
+        </button>
+        <button id="playlist-submit-btn" onclick="submitPlaylistDownload()" disabled class="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-bold shadow-lg shadow-purple-600/30 transition-all hover:scale-105 active:scale-95">
+          <i data-lucide="download" class="w-4 h-4"></i>
+          <span id="playlist-submit-btn-text">تحميل المقاطع المحددة</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Refresh URL Modal (IDM Smart Address Refresh) -->
+  <div id="refresh-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center hidden">
+    <div class="glass-panel w-full max-w-lg rounded-2xl p-6 border border-white/10 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between border-b border-white/10 pb-3">
+        <div class="flex items-center gap-2 text-amber-400 font-semibold">
+          <i data-lucide="refresh-cw" class="w-5 h-5"></i>
+          <span>تحديث عنوان التحميل (Refresh Address)</span>
+        </div>
+        <button onclick="closeRefreshModal()" class="text-gray-400 hover:text-white">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <div class="space-y-3">
+        <p class="text-xs text-gray-300">
+          إذا انتهت صلاحية الرابط المؤقت (Expired Token/Link)، ضع الرابط الجديد هنا وسيتم استئناف التحميل من نفس البايت الذي توقف عنده دون إعادة تنزيل الملف كاملاً.
+        </p>
+        <input type="hidden" id="refresh-task-id" value="">
+        <div>
+          <label class="block text-xs font-semibold text-gray-300 mb-1">الرابط الجديد:</label>
+          <input type="text" id="refresh-url-input" placeholder="https://example.com/new-temporary-link..." class="w-full px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-sm focus:outline-none focus:border-amber-500">
+        </div>
+      </div>
+
+      <div class="flex justify-end gap-3 pt-3 border-t border-white/10">
+        <button onclick="closeRefreshModal()" class="px-4 py-2 rounded-xl text-sm text-gray-400 hover:text-white hover:bg-white/5">إلغاء</button>
+        <button onclick="submitRefreshUrl()" class="px-5 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-white font-medium text-sm flex items-center gap-2 shadow-lg shadow-amber-500/20">
+          <i data-lucide="check" class="w-4 h-4"></i>
+          <span>تحديث واستئناف التحميل</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Smart Scheduler & Queues Modal -->
+  <div id="scheduler-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center hidden">
+    <div class="glass-panel w-full max-w-lg rounded-2xl p-6 border border-white/10 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between border-b border-white/10 pb-3">
+        <div class="flex items-center gap-2 text-purple-400 font-semibold">
+          <i data-lucide="clock" class="w-5 h-5"></i>
+          <span>الجدولة الذكية وإدارة طوابير التنزيل</span>
+        </div>
+        <button onclick="closeSchedulerModal()" class="text-gray-400 hover:text-white">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <div class="space-y-4 text-xs">
+        <div>
+          <label class="block font-semibold text-gray-300 mb-1">الحد الأقصى للتنزيلات المتزامنة (Queue Slots):</label>
+          <select id="sched-max-active" class="w-full px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-sm focus:outline-none focus:border-purple-500">
+            <option value="1">1 ملف في وقت واحد (تتابعي)</option>
+            <option value="2">2 ملفات معاً</option>
+            <option value="3" selected>3 ملفات معاً (متوازن)</option>
+            <option value="5">5 ملفات معاً</option>
+            <option value="10">10 ملفات معاً (سيرفرات سريعة)</option>
+          </select>
+          <p class="text-[10px] text-gray-500 mt-1">يتم وضع بقية الروابط في قائمة الانتظار وتبدأ فور انتهاء كل ملف تلقائياً.</p>
+        </div>
+
+        <div>
+          <label class="block font-semibold text-gray-300 mb-1">وقت البدء التلقائي (الجدولة الليلية):</label>
+          <div class="flex items-center gap-3">
+            <input type="time" id="sched-time" class="px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-sm focus:outline-none focus:border-purple-500 text-white">
+            <button onclick="document.getElementById('sched-time').value = ''" class="px-3 py-2 rounded-xl glass-panel hover:bg-white/10 text-gray-400 hover:text-white">تعطيل التوقيت</button>
+          </div>
+          <p class="text-[10px] text-gray-500 mt-1">تبدأ كافة التنزيلات المؤجلة تلقائياً عند حلول الساعة المحددة (مناسب لباقات الإنترنت الليلية غير المحدودة).</p>
+        </div>
+
+        <div class="p-3 rounded-xl bg-purple-950/20 border border-purple-500/20 flex items-center justify-between">
+          <div>
+            <p class="font-semibold text-gray-200">إيقاف تشغيل الكمبيوتر تلقائياً (Auto-Shutdown)</p>
+            <p class="text-[10px] text-gray-400">إطفاء الحاسوب بعد اكتمال جميع التنزيلات بنجاح.</p>
+          </div>
+          <input type="checkbox" id="sched-shutdown" class="w-4 h-4 accent-purple-500 rounded cursor-pointer">
+        </div>
+      </div>
+
+      <div class="flex justify-end gap-3 pt-3 border-t border-white/10">
+        <button onclick="closeSchedulerModal()" class="px-4 py-2 rounded-xl text-sm text-gray-400 hover:text-white hover:bg-white/5">إلغاء</button>
+        <button onclick="saveSchedulerSettings()" class="px-5 py-2 rounded-xl bg-gradient-to-r from-purple-500 to-indigo-600 hover:from-purple-400 hover:to-indigo-500 text-white font-medium text-sm flex items-center gap-2 shadow-lg shadow-purple-500/20">
+          <i data-lucide="check" class="w-4 h-4"></i>
+          <span>حفظ الإعدادات</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/js/app.js"></script>
+  <script>
+    lucide.createIcons();
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/static/sw.js').catch(() => {});
+      });
+    }
+  </script>
+</body>
+</html>
+

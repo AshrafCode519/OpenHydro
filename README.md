@@ -7,8 +7,8 @@
 **بديل IDM العصري فائق السرعة والمجاني ومفتوح المصدر لكافة المنصات**  
 *Modern, High-Speed, Dynamic Segmentation Download Manager (IDM Alternative) for Windows, Linux & Android*
 
-[![GitHub Release](https://img.shields.io/github/v/release/openhydro/openhydro?color=06b6d4&style=for-the-badge)](https://github.com/openhydro/openhydro/releases)
-[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20Android-3b82f6?style=for-the-badge)](https://github.com/openhydro/openhydro)
+[![GitHub Release](https://img.shields.io/github/v/release/AshrafCode519/OpenHydro?color=06b6d4&style=for-the-badge)](https://github.com/AshrafCode519/OpenHydro/releases)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20Android-3b82f6?style=for-the-badge)](https://github.com/AshrafCode519/OpenHydro)
 [![License](https://img.shields.io/badge/License-MIT-10b981?style=for-the-badge)](LICENSE)
 
 </div>
@@ -39,16 +39,16 @@
 
 ### 🪟 1. نظام ويندوز (Windows 10 / 11)
 - **برنامج التثبيت الرسمي (Windows Installer):**  
-  قم بتحميل وتثبيت [`OpenHydro_Setup_v1.0.0.exe`](https://github.com/openhydro/openhydro/releases) بضغطة واحدة، وسيتم تثبيته وإنشاء اختصارات سطح المكتب وقائمة ابدأ.
+  قم بتحميل وتثبيت [`OpenHydro_Setup_v1.0.0.exe`](https://github.com/AshrafCode519/OpenHydro/releases) بضغطة واحدة، وسيتم تثبيته وإنشاء اختصارات سطح المكتب وقائمة ابدأ.
 - **النسخة المحمولة (Portable Zip):**  
-  قم بفك ضغط [`OpenHydro-v1.0.0-windows-x64-portable.zip`](https://github.com/openhydro/openhydro/releases) وتشغيل `OpenHydro.exe` مباشرة بدون تثبيت.
+  قم بفك ضغط [`OpenHydro-v1.0.0-windows-x64-portable.zip`](https://github.com/AshrafCode519/OpenHydro/releases) وتشغيل `OpenHydro.exe` مباشرة بدون تثبيت.
 
 ---
 
 ### 🐧 2. نظام لينكس (Linux - Ubuntu / Debian / Fedora / Arch)
 #### التثبيت المباشر بأمر واحد (One-Line Installer):
 ```bash
-curl -sSL https://raw.githubusercontent.com/openhydro/openhydro/main/installer-linux.sh | bash
+curl -sSL https://raw.githubusercontent.com/AshrafCode519/OpenHydro/main/installer-linux.sh | bash
 ```
 
 #### التشغيل المحمول (Portable Package):
@@ -67,8 +67,8 @@ cd OpenHydro
 - **طريقة Termux (تشغيل محلي كامل):**
   ```bash
   pkg update -y && pkg install python ffmpeg git -y
-  git clone https://github.com/openhydro/openhydro.git
-  cd openhydro && pip install -r requirements.txt
+  git clone https://github.com/AshrafCode519/OpenHydro.git
+  cd OpenHydro && pip install -r requirements.txt
   python run.py --headless
   ```
 - **حزمة APK:** متوفر كود مشروع أندرويد في مجلد `android/` للتجميع المباشر.

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # OpenHydro One-Line Linux Installer
-# Usage: curl -sSL https://raw.githubusercontent.com/openhydro/openhydro/main/installer-linux.sh | bash
+# Usage: curl -sSL https://raw.githubusercontent.com/AshrafCode519/OpenHydro/main/installer-linux.sh | bash
 # ==============================================================================
 
 set -e
@@ -20,7 +20,7 @@ mkdir -p "$DESKTOP_DIR"
 if [ -d "./openhydro" ]; then
     cp -r ./* "$INSTALL_DIR/"
 else
-    git clone https://github.com/openhydro/openhydro.git "$INSTALL_DIR"
+    git clone https://github.com/AshrafCode519/OpenHydro.git "$INSTALL_DIR"
 fi
 
 cd "$INSTALL_DIR"
@@ -36,3 +36,4 @@ cp openhydro.desktop "$DESKTOP_DIR/"
 
 echo "✅ OpenHydro installed successfully!"
 echo "🚀 You can launch it by typing 'openhydro' in terminal or from your Application Menu."
+

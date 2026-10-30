@@ -81,6 +81,13 @@
         <span>الجدولة والطوابير</span>
       </button>
 
+      <!-- Browser Extension Button -->
+      <button onclick="openExtensionModal()" title="تثبيت إضافة المتصفح لصيد الفيديوهات والتحميلات" class="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-600/30 to-teal-600/30 hover:from-emerald-600/50 hover:to-teal-600/50 border border-emerald-500/40 text-emerald-300 hover:text-emerald-100 font-semibold shadow-lg shadow-emerald-500/10 transition-all hover:scale-105 active:scale-95 text-xs">
+        <i data-lucide="puzzle" class="w-4 h-4 text-emerald-400"></i>
+        <span>إضافة المتصفح</span>
+        <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+      </button>
+
       <!-- Speed Limiter Quick Menu -->
       <div class="relative group">
         <button id="limiter-btn" class="flex items-center gap-2 px-3 py-2 rounded-xl glass-panel glass-panel-hover text-xs text-gray-300">
@@ -483,6 +490,90 @@
           <i data-lucide="check" class="w-4 h-4"></i>
           <span>حفظ الإعدادات</span>
         </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Browser Extension Installation Guide Modal -->
+  <div id="extension-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md hidden transition-all duration-200">
+    <div class="glass-panel w-full max-w-xl rounded-2xl p-6 shadow-2xl border border-emerald-500/30 relative max-h-[90vh] overflow-y-auto">
+      <!-- Modal Header -->
+      <div class="flex items-center justify-between pb-4 border-b border-white/10">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-600 flex items-center justify-center shadow-lg shadow-emerald-500/20">
+            <i data-lucide="puzzle" class="w-5 h-5 text-white"></i>
+          </div>
+          <div>
+            <h2 class="text-base font-bold text-white flex items-center gap-2">
+              <span>تثبيت إضافة المتصفح (Browser Extension)</span>
+              <span class="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-mono">Chrome / Edge / Brave</span>
+            </h2>
+            <p class="text-xs text-gray-400">لصيد الفيديوهات وإظهار زر التحميل [ ⚡ تحميل هذا الفيديو ] فوق المشغل مباشرة</p>
+          </div>
+        </div>
+        <button onclick="closeExtensionModal()" class="text-gray-400 hover:text-white p-2 rounded-lg hover:bg-white/5">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <!-- Steps Content -->
+      <div class="py-4 space-y-4 text-xs">
+        <!-- Step 1 -->
+        <div class="flex items-start gap-3 p-3.5 rounded-xl bg-white/5 border border-white/10">
+          <div class="w-7 h-7 rounded-lg bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 font-bold shrink-0">1</div>
+          <div class="space-y-1.5 flex-1">
+            <h4 class="font-bold text-gray-200">افتح صفحة الإضافات في متصفحك وفعّل وضع المطور</h4>
+            <p class="text-gray-400 leading-relaxed">
+              انسخ وافتح الرابط التالي في المتصفح: 
+              <span class="font-mono px-2 py-0.5 rounded bg-black/40 text-cyan-300 select-all" dir="ltr">chrome://extensions</span> أو <span class="font-mono px-2 py-0.5 rounded bg-black/40 text-cyan-300 select-all" dir="ltr">edge://extensions</span>
+            </p>
+            <p class="text-gray-400">ثم قم بتفعيل زر <strong>Developer mode (وضع مطور البرامج)</strong> في أعلى الزاوية.</p>
+          </div>
+        </div>
+
+        <!-- Step 2 -->
+        <div class="flex items-start gap-3 p-3.5 rounded-xl bg-white/5 border border-white/10">
+          <div class="w-7 h-7 rounded-lg bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 font-bold shrink-0">2</div>
+          <div class="space-y-1.5 flex-1">
+            <h4 class="font-bold text-gray-200">اضغط على زر التحميل</h4>
+            <p class="text-gray-400 leading-relaxed">
+              اضغط على زر <strong>Load unpacked (تحميل إضافة لم يتم حزمها)</strong> الموجود في الشريط العلوي لصفحة الإضافات.
+            </p>
+          </div>
+        </div>
+
+        <!-- Step 3 -->
+        <div class="flex items-start gap-3 p-3.5 rounded-xl bg-white/5 border border-white/10">
+          <div class="w-7 h-7 rounded-lg bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 font-bold shrink-0">3</div>
+          <div class="space-y-2 flex-1">
+            <h4 class="font-bold text-gray-200">اختر مجلد الإضافة في جهازك</h4>
+            <p class="text-gray-400 leading-relaxed">
+              حدد المجلد التالي لاكتمال التثبيت فوراً:
+            </p>
+            <div class="flex items-center gap-2 p-2 rounded-lg bg-black/50 border border-white/10">
+              <span id="extension-folder-path" class="font-mono text-cyan-400 text-[11px] truncate flex-1 select-all" dir="ltr">جاري جلب المسار...</span>
+              <button onclick="copyExtensionPath()" class="px-3 py-1 rounded bg-white/10 hover:bg-white/20 text-gray-200 hover:text-white shrink-0 font-medium transition-all flex items-center gap-1.5">
+                <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+                <span>نسخ المسار</span>
+              </button>
+            </div>
+            <div class="pt-1">
+              <button onclick="openExtensionFolderInExplorer()" class="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/25 transition-all hover:scale-[1.01] active:scale-[0.99]">
+                <i data-lucide="folder-open" class="w-4 h-4"></i>
+                <span>📂 فتح مجلد الإضافة في مستكشف الملفات (Explorer)</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Footer Info -->
+      <div class="pt-3 border-t border-white/10 flex items-center justify-between text-xs text-gray-400">
+        <span class="flex items-center gap-1.5 text-emerald-400">
+          <i data-lucide="check-circle-2" class="w-4 h-4"></i>
+          <span>تعمل مع كافة متصفحات Chromium (Chrome, Edge, Brave, Opera)</span>
+        </span>
+        <button onclick="closeExtensionModal()" class="px-5 py-2 rounded-xl glass-panel hover:bg-white/10 text-white font-medium">حسناً، فهمت</button>
       </div>
     </div>
   </div>

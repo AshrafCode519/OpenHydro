@@ -259,6 +259,43 @@ def create_app(engine: DownloadEngine) -> FastAPI:
             "total_speed": total_speed,
         }
 
+    # Browser Extension Info & Explorer Launcher
+    @app.get("/api/extension/info")
+    async def get_extension_info():
+        import subprocess
+        if getattr(sys, "frozen", False):
+            base_dir = getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
+            candidates = [
+                os.path.join(os.path.dirname(sys.executable), "openhydro", "extension"),
+                os.path.join(os.path.dirname(sys.executable), "_internal", "openhydro", "extension"),
+                os.path.join(base_dir, "openhydro", "extension"),
+                os.path.join(base_dir, "_internal", "openhydro", "extension"),
+            ]
+            ext_dir = next((c for c in candidates if os.path.exists(c)), candidates[0])
+        else:
+            ext_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "extension"))
+
+        return {
+            "path": ext_dir,
+            "exists": os.path.exists(ext_dir),
+            "version": "1.1.0"
+        }
+
+    @app.post("/api/extension/open_folder")
+    async def open_extension_folder():
+        import subprocess
+        info = await get_extension_info()
+        ext_dir = info["path"]
+        if os.path.exists(ext_dir):
+            if sys.platform == "win32":
+                os.startfile(ext_dir)
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", ext_dir])
+            else:
+                subprocess.Popen(["xdg-open", ext_dir])
+            return {"status": "success", "path": ext_dir}
+        return {"status": "error", "message": "Extension directory not found"}
+
     # Browser extension / Remote Push trigger
     @app.post("/api/remote/push")
     async def remote_push(req: AddTaskRequest):

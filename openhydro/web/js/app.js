@@ -955,3 +955,51 @@ async function submitPlaylistDownload() {
   }
 }
 
+
+
+// --- Browser Extension Guide Modal Controller ---
+let cachedExtensionPath = '';
+
+async function openExtensionModal() {
+  const modal = document.getElementById('extension-modal');
+  modal.classList.remove('hidden');
+  lucide.createIcons();
+
+  const pathDisplay = document.getElementById('extension-folder-path');
+  try {
+    const res = await fetch('/api/extension/info');
+    const data = await res.json();
+    cachedExtensionPath = data.path;
+    pathDisplay.innerText = data.path;
+  } catch (e) {
+    pathDisplay.innerText = 'openhydro/extension';
+  }
+}
+
+function closeExtensionModal() {
+  document.getElementById('extension-modal').classList.add('hidden');
+}
+
+async function openExtensionFolderInExplorer() {
+  try {
+    const res = await fetch('/api/extension/open_folder', { method: 'POST' });
+    const data = await res.json();
+    if (data.status === 'success') {
+      showToast('📂 تم فتح مجلد الإضافة في مستكشف الملفات بنجاح!', 'success');
+    } else {
+      showToast('تعذر فتح المجلد تلقائياً: ' + data.message, 'warning');
+    }
+  } catch (e) {
+    showToast('حدث خطأ: ' + e, 'error');
+  }
+}
+
+function copyExtensionPath() {
+  const path = cachedExtensionPath || document.getElementById('extension-folder-path').innerText;
+  if (!path) return;
+  navigator.clipboard.writeText(path).then(() => {
+    showToast('📋 تم نسخ مسار مجلد الإضافة بنجاح!', 'success');
+  }).catch(() => {
+    showToast('تعذر النسخ إلى الحافظة', 'error');
+  });
+}

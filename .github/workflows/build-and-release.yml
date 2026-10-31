@@ -45,13 +45,19 @@ jobs:
         run: |
           Compress-Archive -Path "dist/OpenHydro/*" -DestinationPath "OpenHydro-windows-x64-portable.zip" -Force
 
+      - name: Prepare Windows Release Artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "win_artifacts"
+          Get-ChildItem -Path "dist_installer\*.exe" | Copy-Item -Destination "win_artifacts\"
+          Copy-Item -Path "OpenHydro-windows-x64-portable.zip" -Destination "win_artifacts\"
+          Get-ChildItem -Path "win_artifacts"
+
       - name: Upload Windows Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: windows-release
-          path: |
-            dist_installer/*.exe
-            OpenHydro-windows-x64-portable.zip
+          path: win_artifacts/*
 
   build-linux:
     name: Build Linux Portable Package
@@ -126,6 +132,11 @@ jobs:
         with:
           name: linux-release
           path: release-files/
+
+      - name: Flatten Release Files
+        run: |
+          find release-files -mindepth 2 -type f -exec mv -t release-files/ {} + || true
+          ls -la release-files/
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

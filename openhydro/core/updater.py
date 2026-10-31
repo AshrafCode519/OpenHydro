@@ -77,25 +77,35 @@ class UpdateChecker:
                     is_windows = sys.platform.startswith("win")
                     is_linux = sys.platform.startswith("linux")
 
-                    for a in assets:
-                        name = a.get("name", "").lower()
-                        if is_windows:
-                            # Prefer installer Setup .exe, then portable .zip
-                            if name.endswith(".exe") and "setup" in name:
-                                download_url = a.get("browser_download_url")
-                                asset_name = a.get("name")
-                                asset_size = a.get("size", 0)
-                                break
-                            elif name.endswith(".zip") and not asset_name:
-                                download_url = a.get("browser_download_url")
-                                asset_name = a.get("name")
-                                asset_size = a.get("size", 0)
-                        elif is_linux:
-                            if name.endswith(".tar.gz") or name.endswith(".appimage"):
-                                download_url = a.get("browser_download_url")
-                                asset_name = a.get("name")
-                                asset_size = a.get("size", 0)
-                                break
+                    if is_windows:
+                        # 1. Strictly prioritize dedicated Windows Setup Installer (.exe)
+                        setup_asset = next(
+                            (a for a in assets if a.get("name", "").lower().endswith(".exe")),
+                            None
+                        )
+                        if setup_asset:
+                            download_url = setup_asset.get("browser_download_url")
+                            asset_name = setup_asset.get("name")
+                            asset_size = setup_asset.get("size", 0)
+                        else:
+                            # 2. Fallback to portable .zip only if no installer exists
+                            zip_asset = next(
+                                (a for a in assets if a.get("name", "").lower().endswith(".zip")),
+                                None
+                            )
+                            if zip_asset:
+                                download_url = zip_asset.get("browser_download_url")
+                                asset_name = zip_asset.get("name")
+                                asset_size = zip_asset.get("size", 0)
+                    elif is_linux:
+                        linux_asset = next(
+                            (a for a in assets if a.get("name", "").lower().endswith(".tar.gz") or a.get("name", "").lower().endswith(".appimage")),
+                            None
+                        )
+                        if linux_asset:
+                            download_url = linux_asset.get("browser_download_url")
+                            asset_name = linux_asset.get("name")
+                            asset_size = linux_asset.get("size", 0)
 
                     return {
                         "has_update": has_update,

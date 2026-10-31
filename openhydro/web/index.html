@@ -69,10 +69,10 @@
         <span>تنزيل جديد</span>
       </button>
 
-      <!-- Playlist Download Button (Snaptube/Vidmate style) -->
-      <button onclick="openPlaylistModal()" title="تحميل قائمة تشغيل كاملة (YouTube Playlist)" class="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-medium shadow-lg shadow-purple-500/25 transition-all hover:scale-105 active:scale-95 text-xs">
-        <i data-lucide="list-music" class="w-4 h-4"></i>
-        <span>تحميل Playlist</span>
+      <!-- Playlist & Google Drive Download Button (Snaptube/Vidmate style) -->
+      <button onclick="openPlaylistModal()" title="تحميل قائمة تشغيل كاملة أو مجلد Google Drive (Playlists & Google Drive Folders)" class="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-medium shadow-lg shadow-purple-500/25 transition-all hover:scale-105 active:scale-95 text-xs">
+        <i data-lucide="folder-down" class="w-4 h-4"></i>
+        <span>تحميل Playlist / Drive</span>
       </button>
 
       <!-- Scheduler & Queues Button -->
@@ -317,14 +317,14 @@
     </div>
   </div>
 
-  <!-- Full Playlist Downloader Modal (Snaptube / Vidmate Style) -->
+  <!-- Full Playlist & Google Drive Downloader Modal (Snaptube / Vidmate Style) -->
   <div id="playlist-modal" class="fixed inset-0 bg-black/75 backdrop-blur-md z-50 flex items-center justify-center hidden p-4">
     <div class="glass-panel w-full max-w-2xl max-h-[90vh] rounded-2xl p-6 border border-white/10 shadow-2xl flex flex-col space-y-4">
       <!-- Modal Header -->
       <div class="flex items-center justify-between border-b border-white/10 pb-3">
         <div class="flex items-center gap-2 text-purple-400 font-semibold text-base">
-          <i data-lucide="list-music" class="w-5 h-5"></i>
-          <span>تحميل قائمة تشغيل كاملة (Snaptube / Vidmate Style)</span>
+          <i data-lucide="folder-down" class="w-5 h-5"></i>
+          <span>تحميل قائمة تشغيل أو مجلد Google Drive (Batch Downloader)</span>
         </div>
         <button onclick="closePlaylistModal()" class="text-gray-400 hover:text-white p-1 rounded-lg hover:bg-white/5 transition-all">
           <i data-lucide="x" class="w-5 h-5"></i>
@@ -333,17 +333,17 @@
 
       <!-- URL Input & Probe -->
       <div class="space-y-2">
-        <label class="block text-xs font-semibold text-gray-300">رابط قائمة التشغيل (Playlist URL):</label>
+        <label class="block text-xs font-semibold text-gray-300">رابط القائمة أو مجلد Google Drive أو عدة روابط:</label>
         <div class="flex gap-2">
           <div class="relative flex-1">
-            <input type="text" id="playlist-url-input" placeholder="https://www.youtube.com/playlist?list=..." class="w-full px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-sm focus:outline-none focus:border-purple-500 text-gray-200">
-            <span id="playlist-probe-spinner" class="absolute left-3 top-2.5 hidden">
+            <textarea id="playlist-url-input" rows="2" placeholder="الصق رابط قائمة YouTube أو رابط مجلد Google Drive (أو عدة روابط مفصولة بأسطر)..." class="w-full px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-xs focus:outline-none focus:border-purple-500 text-gray-200 resize-none"></textarea>
+            <span id="playlist-probe-spinner" class="absolute left-3 top-3 hidden">
               <i data-lucide="loader-2" class="w-4 h-4 text-purple-400 animate-spin"></i>
             </span>
           </div>
-          <button onclick="probePlaylistUrl()" class="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold shadow-lg shadow-purple-600/30 transition-all flex items-center gap-1.5 shrink-0">
+          <button onclick="probePlaylistUrl()" class="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold shadow-lg shadow-purple-600/30 transition-all flex items-center gap-1.5 shrink-0 self-stretch">
             <i data-lucide="search" class="w-3.5 h-3.5"></i>
-            <span>فحص القائمة</span>
+            <span>فحص المحتوى</span>
           </button>
         </div>
       </div>

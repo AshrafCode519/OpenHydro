@@ -74,8 +74,9 @@ class DownloadEngine:
         if path_name and "." in path_name:
             filename = path_name
 
-        # Check if URL belongs to a playlist (YouTube, SoundCloud sets, etc.)
-        if VideoExtractor.is_playlist_url(url):
+        # Check if URL belongs to a playlist (YouTube, SoundCloud sets, Google Drive folder, etc.)
+        from .gdrive import GoogleDriveHandler
+        if VideoExtractor.is_playlist_url(url) or GoogleDriveHandler.is_gdrive_folder(url) or len(GoogleDriveHandler.find_all_file_ids(url)) > 1:
             try:
                 pinfo = await VideoExtractor.extract_playlist(url)
                 return {
@@ -84,6 +85,7 @@ class DownloadEngine:
                     "supports_ranges": False,
                     "is_playlist": True,
                     "is_video_platform": True,
+                    "is_gdrive": pinfo.get("is_gdrive", False),
                     "title": pinfo["title"],
                     "uploader": pinfo.get("uploader"),
                     "count": pinfo["count"],
@@ -91,6 +93,20 @@ class DownloadEngine:
                 }
             except Exception as e:
                 print(f"[Probe] Playlist extraction failed: {e}")
+
+        # Check if single Google Drive file
+        if GoogleDriveHandler.is_gdrive_file(url):
+            try:
+                ginfo = await GoogleDriveHandler.resolve_direct_download(url)
+                return {
+                    "filename": ginfo["filename"],
+                    "total_bytes": ginfo["total_bytes"],
+                    "supports_ranges": ginfo["supports_ranges"],
+                    "is_gdrive": True,
+                    "resolved_url": ginfo["resolved_url"],
+                }
+            except Exception as e:
+                print(f"[Probe] Google Drive file resolve failed: {e}")
 
         # Check if URL belongs to a video streaming platform (YouTube, TikTok, Facebook, etc.)
         if VideoExtractor.is_video_site(url):
@@ -213,14 +229,16 @@ class DownloadEngine:
 
         final_filename = os.path.basename(target_path)
 
-        is_extractor = info.get("is_video_platform", False)
-        supports_ranges = True if is_extractor else info.get("supports_ranges", False)
+        target_url = info.get("resolved_url") or url
+        is_gdrive = info.get("is_gdrive", False)
+        is_extractor = info.get("is_video_platform", False) and not is_gdrive
+        supports_ranges = True if (is_extractor or is_gdrive) else info.get("supports_ranges", False)
         conns = num_connections if supports_ranges else 1
-        if is_extractor and conns < 8:
-            conns = 16  # Turbo multi-threaded default for video platforms
+        if (is_extractor or is_gdrive) and conns < 8:
+            conns = 16  # Turbo multi-threaded default for video platforms & Google Drive
 
         task = DownloadTask(
-            url=url,
+            url=target_url,
             filename=final_filename,
             save_path=target_path,
             total_bytes=info.get("total_bytes", 0),
@@ -633,6 +651,14 @@ class DownloadEngine:
         task = self.tasks.get(task_id)
         if not task:
             return False
+
+        from .gdrive import GoogleDriveHandler
+        if GoogleDriveHandler.is_gdrive_file(new_url):
+            try:
+                ginfo = await GoogleDriveHandler.resolve_direct_download(new_url)
+                new_url = ginfo.get("resolved_url") or new_url
+            except Exception:
+                pass
 
         task.url = new_url
         StorageManager.save_task_meta(task)

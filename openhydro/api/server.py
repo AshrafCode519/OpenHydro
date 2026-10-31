@@ -46,6 +46,12 @@ class PlaylistItemRequest(BaseModel):
     url: str
     title: str
     index: int
+    download_url: Optional[str] = None
+    is_gdrive: bool = False
+
+
+class PlaylistProbeRequest(BaseModel):
+    url: str
 
 
 class PlaylistDownloadRequest(BaseModel):
@@ -112,6 +118,15 @@ def create_app(engine: DownloadEngine) -> FastAPI:
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
+    @app.post("/api/playlist/probe")
+    async def probe_playlist_post_endpoint(req: PlaylistProbeRequest):
+        from openhydro.core.extractor import VideoExtractor
+        try:
+            info = await VideoExtractor.extract_playlist(req.url)
+            return info
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
     @app.post("/api/playlist/download")
     async def download_playlist_endpoint(req: PlaylistDownloadRequest):
         import re
@@ -122,6 +137,8 @@ def create_app(engine: DownloadEngine) -> FastAPI:
         added_tasks = []
         for item in req.items:
             clean_item_title = re.sub(r'[\\/*?:"<>|]', "_", item.title).strip()
+            _, existing_ext = os.path.splitext(clean_item_title)
+
             ext = ".mp4"
             if req.format_id == "audio_mp3":
                 ext = ".mp3"
@@ -131,10 +148,13 @@ def create_app(engine: DownloadEngine) -> FastAPI:
                 ext = ".srt"
             elif req.format_id == "subtitle_txt":
                 ext = ".txt"
+            elif (existing_ext and len(existing_ext) <= 5) or item.is_gdrive:
+                ext = ""
 
             fn = f"{item.index:02d} - {clean_item_title}{ext}"
+            task_url = item.download_url or item.url
             task = await engine.add_download(
-                url=item.url,
+                url=task_url,
                 filename=fn,
                 save_dir=target_dir,
                 num_connections=req.num_connections,

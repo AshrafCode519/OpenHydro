@@ -41,7 +41,9 @@
       host.includes("x.com") ||
       host.includes("instagram.com") ||
       host.includes("vimeo.com") ||
-      host.includes("dailymotion.com")
+      host.includes("dailymotion.com") ||
+      host.includes("drive.google.com") ||
+      host.includes("docs.google.com")
     ) {
       return window.location.href;
     }

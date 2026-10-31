@@ -212,6 +212,22 @@ segment_1.ts
         self.assertTrue(VideoExtractor.is_playlist_url("https://www.youtube.com/watch?v=123&list=PLr6-GrHUlVf_ZNmuQSXdS197Oyr1L9sPB"))
         self.assertFalse(VideoExtractor.is_playlist_url("https://www.youtube.com/watch?v=123"))
 
+        # Test Google Drive detection
+        from openhydro.core.gdrive import GoogleDriveHandler
+        gfolder = "https://drive.google.com/drive/folders/1dQ4sx0-__Nvg65rxTSgQrl7VyW_FZ9QI?usp=sharing"
+        gfile = "https://drive.google.com/file/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs/view?usp=sharing"
+        self.assertTrue(GoogleDriveHandler.is_gdrive_folder(gfolder))
+        self.assertEqual(GoogleDriveHandler.extract_folder_id(gfolder), "1dQ4sx0-__Nvg65rxTSgQrl7VyW_FZ9QI")
+        self.assertTrue(GoogleDriveHandler.is_gdrive_file(gfile))
+        self.assertEqual(GoogleDriveHandler.extract_file_id(gfile), "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs")
+        self.assertTrue(VideoExtractor.is_playlist_url(gfolder))
+
+        # Test Batch multi-link extraction
+        batch_text = f"{gfile}\nhttps://drive.google.com/file/d/1eE-5jm2G8N5FL4HHeexrL0-Lg15bc0-D/view"
+        pairs = GoogleDriveHandler.find_all_file_ids(batch_text)
+        self.assertEqual(len(pairs), 2)
+        self.assertTrue(VideoExtractor.is_playlist_url(batch_text))
+
 
 if __name__ == "__main__":
     unittest.main()

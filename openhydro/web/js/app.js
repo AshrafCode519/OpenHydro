@@ -819,8 +819,8 @@ function closePlaylistModal() {
 
 async function probePlaylistUrl() {
   const url = document.getElementById('playlist-url-input').value.trim();
-  if (!url || !url.startsWith('http')) {
-    showToast('يرجى إدخال رابط قائمة تشغيل صالح', 'warning');
+  if (!url) {
+    showToast('يرجى إدخال رابط قائمة تشغيل أو مجلد Google Drive أو عدة روابط', 'warning');
     return;
   }
 
@@ -835,19 +835,50 @@ async function probePlaylistUrl() {
   submitBtn.disabled = true;
 
   try {
-    const res = await fetch(`/api/playlist/probe?url=${encodeURIComponent(url)}`);
+    const res = await fetch('/api/playlist/probe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: url })
+    });
     if (!res.ok) {
       const err = await res.json();
-      throw new Error(err.detail || 'فشل فحص قائمة التشغيل');
+      throw new Error(err.detail || 'فشل فحص قائمة التشغيل أو مجلد Google Drive');
     }
 
     const data = await res.json();
     currentPlaylistData = data;
 
     document.getElementById('playlist-title-display').innerText = data.title;
-    document.getElementById('playlist-meta-display').innerText = `${data.uploader ? data.uploader + ' • ' : ''}إجمالي المقاطع: ${data.count}`;
+    document.getElementById('playlist-meta-display').innerText = `${data.uploader ? data.uploader + ' • ' : ''}إجمالي العناصر: ${data.count}`;
     document.getElementById('playlist-total-count').innerText = data.count;
     document.getElementById('playlist-selected-count').innerText = data.count;
+
+    // Adjust quality options for Google Drive vs YouTube
+    const qualitySelect = document.getElementById('playlist-quality-select');
+    if (data.is_gdrive) {
+      qualitySelect.innerHTML = `
+        <optgroup label="⚡ تحميل الملفات الأصلية">
+          <option value="original" selected>⚡ الجودة والملف الأصلي بالكامل (Direct Stream / Turbo 32x)</option>
+        </optgroup>
+        <optgroup label="🎵 استخراج الصوت (إذا كانت فيديوهات)">
+          <option value="audio_mp3">تحميل كملف صوتي MP3 (320 kbps)</option>
+          <option value="audio_m4a">تحميل كملف صوتي أصلي M4A</option>
+        </optgroup>
+      `;
+    } else {
+      qualitySelect.innerHTML = `
+        <optgroup label="🎬 جودات الفيديو الموحدة">
+          <option value="bestvideo[height<=1080]+bestaudio/best">1080p FHD (عالي الدقة)</option>
+          <option value="bestvideo[height<=720]+bestaudio/best" selected>720p HD (موصى به - متوازن)</option>
+          <option value="bestvideo[height<=480]+bestaudio/best">480p SD (توفير مساحة)</option>
+          <option value="bestvideo[height<=360]+bestaudio/best">360p (دقة منخفضة)</option>
+        </optgroup>
+        <optgroup label="🎵 استخراج الصوت (Audio Only)">
+          <option value="audio_mp3">تحميل كألبوم صوتي MP3 (320 kbps)</option>
+          <option value="audio_m4a">تحميل كألبوم صوتي أصلي M4A</option>
+        </optgroup>
+      `;
+    }
 
     renderPlaylistItems(data.entries);
 
@@ -856,9 +887,9 @@ async function probePlaylistUrl() {
     submitBtn.disabled = false;
     updatePlaylistSubmitButtonText();
     lucide.createIcons();
-    showToast(`⚡ تم فحص القائمة بنجاح! تم العثور على ${data.count} مقطع.`, 'success');
+    showToast(`⚡ تم فحص المحتوى بنجاح! تم العثور على ${data.count} عنصر.`, 'success');
   } catch (e) {
-    showToast(`خطأ أثناء فحص القائمة: ${e.message}`, 'error');
+    showToast(`خطأ أثناء فحص الرابط: ${e.message}`, 'error');
   } finally {
     spinner.classList.add('hidden');
   }
@@ -869,7 +900,7 @@ function renderPlaylistItems(entries) {
   container.innerHTML = entries.map(item => `
     <div class="flex items-center gap-3 p-2 rounded-lg bg-white/5 hover:bg-white/10 transition-all border border-white/5">
       <input type="checkbox" class="playlist-item-checkbox rounded bg-slate-900 border-white/20 text-purple-600 focus:ring-0 cursor-pointer" 
-             data-index="${item.index}" data-url="${item.url}" data-title="${encodeURIComponent(item.title)}" onchange="updatePlaylistSelectedCount()" checked>
+             data-index="${item.index}" data-url="${item.url}" data-download-url="${item.download_url || item.url}" data-is-gdrive="${item.is_gdrive ? 'true' : 'false'}" data-title="${encodeURIComponent(item.title)}" onchange="updatePlaylistSelectedCount()" checked>
       <span class="text-xs font-mono text-purple-400 w-6 shrink-0">${item.index}.</span>
       ${item.thumbnail ? `<img src="${item.thumbnail}" class="w-14 h-9 object-cover rounded border border-white/10 shrink-0" alt="">` : ''}
       <div class="flex-1 min-w-0">
@@ -901,7 +932,7 @@ function updatePlaylistSubmitButtonText() {
   const checked = document.querySelectorAll('.playlist-item-checkbox:checked');
   const btnText = document.getElementById('playlist-submit-btn-text');
   if (btnText) {
-    btnText.innerText = `تحميل المقاطع المحددة (${checked.length} مقطع)`;
+    btnText.innerText = `تحميل العناصر المحددة (${checked.length} عنصر)`;
   }
 }
 
@@ -910,12 +941,14 @@ async function submitPlaylistDownload() {
 
   const checkboxes = document.querySelectorAll('.playlist-item-checkbox:checked');
   if (checkboxes.length === 0) {
-    showToast('يرجى تحديد مقطع واحد على الأقل للتحميل', 'warning');
+    showToast('يرجى تحديد عنصر واحد على الأقل للتحميل', 'warning');
     return;
   }
 
   const items = Array.from(checkboxes).map(cb => ({
     url: cb.dataset.url,
+    download_url: cb.dataset.downloadUrl || cb.dataset.url,
+    is_gdrive: cb.dataset.isGdrive === 'true',
     title: decodeURIComponent(cb.dataset.title),
     index: parseInt(cb.dataset.index, 10)
   }));
@@ -923,7 +956,7 @@ async function submitPlaylistDownload() {
   const formatId = document.getElementById('playlist-quality-select').value;
   const submitBtn = document.getElementById('playlist-submit-btn');
   submitBtn.disabled = true;
-  submitBtn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i><span>جاري جدولة المقاطع...</span>`;
+  submitBtn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i><span>جاري جدولة العناصر...</span>`;
   lucide.createIcons();
 
   try {
@@ -942,15 +975,15 @@ async function submitPlaylistDownload() {
     if (data.status === 'success') {
       closePlaylistModal();
       await fetchTasks();
-      showToast(`⚡ تم إدراج ${data.enqueued_count} مقطع بنجاح في طابور التحميل الذكي!`, 'success', 5000);
+      showToast(`⚡ تم إدراج ${data.enqueued_count} عنصر بنجاح في طابور التحميل الذكي!`, 'success', 5000);
     } else {
-      showToast('حدث خطأ أثناء جدولة قائمة التشغيل', 'error');
+      showToast('حدث خطأ أثناء جدولة قائمة التشغيل أو مجلد Google Drive', 'error');
     }
   } catch (e) {
     showToast(`فشل التحميل: ${e.message}`, 'error');
   } finally {
     submitBtn.disabled = false;
-    submitBtn.innerHTML = `<i data-lucide="download" class="w-4 h-4"></i><span id="playlist-submit-btn-text">تحميل المقاطع المحددة</span>`;
+    submitBtn.innerHTML = `<i data-lucide="download" class="w-4 h-4"></i><span id="playlist-submit-btn-text">تحميل العناصر المحددة</span>`;
     lucide.createIcons();
   }
 }

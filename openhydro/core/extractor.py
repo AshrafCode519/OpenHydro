@@ -38,8 +38,11 @@ class VideoExtractor:
 
     @staticmethod
     def is_playlist_url(url: str) -> bool:
-        """Determines if the URL points to a full playlist or album."""
+        """Determines if the URL points to a full playlist, album, Google Drive folder, or batch list."""
         try:
+            from .gdrive import GoogleDriveHandler
+            if GoogleDriveHandler.is_gdrive_folder(url) or len(GoogleDriveHandler.find_all_file_ids(url)) > 1:
+                return True
             lower = url.lower()
             return ("list=" in lower and "index=" not in lower) or "youtube.com/playlist" in lower or "/sets/" in lower
         except Exception:
@@ -57,13 +60,31 @@ class VideoExtractor:
         Extracts video metadata, title, duration, video qualities, audio formats,
         and available subtitle/transcript options asynchronously.
         """
+        from .gdrive import GoogleDriveHandler
+        if GoogleDriveHandler.is_gdrive_file(url):
+            ginfo = await GoogleDriveHandler.resolve_direct_download(url)
+            return {
+                "is_platform_video": False,
+                "is_gdrive": True,
+                "title": ginfo["filename"],
+                "filename": ginfo["filename"],
+                "total_bytes": ginfo["total_bytes"],
+                "supports_ranges": ginfo["supports_ranges"],
+                "resolved_url": ginfo["resolved_url"],
+            }
         return await asyncio.to_thread(cls._sync_extract, url)
 
     @classmethod
     async def extract_playlist(cls, url: str) -> Dict:
         """
         Extracts playlist metadata, title, video count, and video list asynchronously.
+        Supports YouTube playlists, Google Drive folders, and batch Drive file lists.
         """
+        from .gdrive import GoogleDriveHandler
+        if GoogleDriveHandler.is_gdrive_folder(url):
+            return await GoogleDriveHandler.extract_folder(url)
+        if len(GoogleDriveHandler.find_all_file_ids(url)) > 1:
+            return await GoogleDriveHandler.extract_multiple_files(url)
         return await asyncio.to_thread(cls._sync_extract_playlist, url)
 
     @classmethod

@@ -36,3 +36,4 @@ python run.py --headless
 1. افتح مجلد `android/` داخل **Android Studio**.
 2. قم بعمل **Build > Build Bundle(s) / APK(s) > Build APK(s)**.
 3. سينتج لك ملف `app-release.apk` جاهز للتثبيت على أي جهاز أندرويد.
+

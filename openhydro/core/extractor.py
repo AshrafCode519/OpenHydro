@@ -15,7 +15,7 @@ from .hls import HLSDownloader
 VIDEO_DOMAINS = [
     "youtube.com", "youtu.be",
     "tiktok.com",
-    "facebook.com", "fb.watch",
+    "facebook.com", "fb.watch", "fb.com",
     "twitter.com", "x.com",
     "instagram.com",
     "vimeo.com",
@@ -26,6 +26,37 @@ VIDEO_DOMAINS = [
 
 
 class VideoExtractor:
+    @staticmethod
+    def normalize_url(url: str) -> str:
+        """Normalizes video URLs (e.g. mobile Facebook to desktop, fb.watch redirects)."""
+        if not url or not isinstance(url, str):
+            return url or ""
+
+        # Normalize mobile Facebook variants to www.facebook.com
+        clean_url = re.sub(
+            r'https?://(?:m|web|touch|mbasic)\.facebook\.com',
+            'https://www.facebook.com',
+            url.strip()
+        )
+
+        # If Facebook share or fb.watch redirect link, resolve canonical destination
+        if "facebook.com/share" in clean_url or "fb.watch" in clean_url:
+            try:
+                from curl_cffi import requests
+                r = requests.get(
+                    clean_url,
+                    impersonate="chrome120",
+                    allow_redirects=True,
+                    timeout=5,
+                    headers={"Accept-Language": "en-US,en;q=0.9"}
+                )
+                if r.status_code == 200 and r.url and "share" not in r.url:
+                    clean_url = str(r.url)
+            except Exception:
+                pass
+
+        return clean_url
+
     @staticmethod
     def is_video_site(url: str) -> bool:
         """Determines if the URL belongs to a supported video streaming platform."""
@@ -72,6 +103,7 @@ class VideoExtractor:
                 "supports_ranges": ginfo["supports_ranges"],
                 "resolved_url": ginfo["resolved_url"],
             }
+        url = cls.normalize_url(url)
         return await asyncio.to_thread(cls._sync_extract, url)
 
     @classmethod
@@ -85,6 +117,7 @@ class VideoExtractor:
             return await GoogleDriveHandler.extract_folder(url)
         if len(GoogleDriveHandler.find_all_file_ids(url)) > 1:
             return await GoogleDriveHandler.extract_multiple_files(url)
+        url = cls.normalize_url(url)
         return await asyncio.to_thread(cls._sync_extract_playlist, url)
 
     @classmethod
@@ -145,6 +178,11 @@ class VideoExtractor:
             "no_warnings": True,
             "skip_download": True,
             "noplaylist": True,
+            "http_headers": {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept-Language": "en-US,en;q=0.9,ar;q=0.8",
+                "Sec-Fetch-Mode": "navigate",
+            },
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -157,14 +195,35 @@ class VideoExtractor:
         raw_formats = info.get("formats", [])
         qualities = []
 
-        # 1. Preset target video resolutions
+        # Check for Facebook-specific formats (HD / SD)
+        has_fb_hd = any(f.get("format_id") == "hd" for f in raw_formats)
+        has_fb_sd = any(f.get("format_id") == "sd" for f in raw_formats)
+
+        if has_fb_hd:
+            qualities.append({
+                "label": "🎬 HD عالي الجودة (Facebook HD)",
+                "height": 1080,
+                "format_id": "hd/bestvideo+bestaudio/best",
+                "type": "video",
+                "ext": "mp4",
+            })
+        if has_fb_sd:
+            qualities.append({
+                "label": "🎬 SD جودة قياسية (Facebook SD)",
+                "height": 480,
+                "format_id": "sd/bestvideo+bestaudio/best",
+                "type": "video",
+                "ext": "mp4",
+            })
+
+        # 1. Preset target video resolutions (with safe /best fallback)
         targets = [
-            ("2160p (4K UHD)", 2160, "bestvideo[height<=2160]+bestaudio/best[height<=2160]"),
-            ("1440p (2K QHD)", 1440, "bestvideo[height<=1440]+bestaudio/best[height<=1440]"),
-            ("1080p (FHD)", 1080, "bestvideo[height<=1080]+bestaudio/best[height<=1080]"),
-            ("720p (HD)", 720, "bestvideo[height<=720]+bestaudio/best[height<=720]"),
-            ("480p (SD)", 480, "bestvideo[height<=480]+bestaudio/best[height<=480]"),
-            ("360p (عادي)", 360, "bestvideo[height<=360]+bestaudio/best[height<=360]"),
+            ("2160p (4K UHD)", 2160, "bestvideo[height<=2160]+bestaudio/best[height<=2160]/best"),
+            ("1440p (2K QHD)", 1440, "bestvideo[height<=1440]+bestaudio/best[height<=1440]/best"),
+            ("1080p (FHD)", 1080, "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best"),
+            ("720p (HD)", 720, "bestvideo[height<=720]+bestaudio/best[height<=720]/best"),
+            ("480p (SD)", 480, "bestvideo[height<=480]+bestaudio/best[height<=480]/best"),
+            ("360p (عادي)", 360, "bestvideo[height<=360]+bestaudio/best[height<=360]/best"),
         ]
 
         max_height = 0
@@ -174,7 +233,7 @@ class VideoExtractor:
                 max_height = h
 
         for label, h, fmt_selector in targets:
-            if max_height >= h or h == 360:
+            if max_height >= h or (max_height == 0 and not (has_fb_hd or has_fb_sd) and h == 360):
                 qualities.append({
                     "label": f"🎬 {label}",
                     "height": h,
@@ -182,6 +241,15 @@ class VideoExtractor:
                     "type": "video",
                     "ext": "mp4",
                 })
+
+        if not qualities:
+            qualities.append({
+                "label": "🎬 أعلى دقة متاحة (Best Quality)",
+                "height": 1080,
+                "format_id": "bestvideo+bestaudio/best",
+                "type": "video",
+                "ext": "mp4",
+            })
 
         # 2. Add Audio-Only options (MP3 & M4A)
         qualities.append({
@@ -260,6 +328,7 @@ class VideoExtractor:
         """
         Executes download for Video, Audio, or Subtitle/Text transcript with multi-threaded concurrent fragment downloads.
         """
+        url = cls.normalize_url(url)
         return await asyncio.to_thread(
             cls._sync_download, url, output_path, format_selector, num_connections, on_progress, is_cancelled
         )
@@ -277,6 +346,12 @@ class VideoExtractor:
         import yt_dlp
 
         ffmpeg_bin = HLSDownloader.find_ffmpeg()
+
+        # Fallback safety: ensure format_selector always ends with /bestvideo+bestaudio/best
+        if not format_selector:
+            format_selector = "bestvideo+bestaudio/best"
+        elif not (format_selector.endswith("/best") or format_selector.endswith("/b")):
+            format_selector = f"{format_selector}/bestvideo+bestaudio/best"
 
         def progress_hook(d):
             if is_cancelled and is_cancelled():
@@ -449,6 +524,10 @@ class VideoExtractor:
                 "quiet": True,
                 "no_warnings": True,
                 "progress_hooks": [progress_hook],
+                "http_headers": {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Accept-Language": "en-US,en;q=0.9,ar;q=0.8",
+                },
             }
             if ffmpeg_bin:
                 ydl_opts["ffmpeg_location"] = os.path.dirname(ffmpeg_bin)

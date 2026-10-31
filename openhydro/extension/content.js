@@ -32,11 +32,49 @@
 
   function getMediaUrl(video) {
     const host = window.location.hostname.toLowerCase();
+
+    // Special handling for Facebook:
+    if (host.includes("facebook.com") || host.includes("fb.watch")) {
+      const path = window.location.pathname.toLowerCase();
+      // If currently on an actual watch, reel, or videos permalink page:
+      if (path.includes("/watch") || path.includes("/reel/") || path.includes("/videos/")) {
+        return window.location.href;
+      }
+
+      // If playing in feed, group, or timeline, find enclosing post container
+      let curr = video;
+      for (let i = 0; i < 15 && curr; i++) {
+        curr = curr.parentElement;
+        if (!curr) break;
+
+        const videoLink = curr.querySelector('a[href*="/videos/"], a[href*="/watch"], a[href*="/reel/"]');
+        if (videoLink && videoLink.href) {
+          return videoLink.href;
+        }
+
+        if (curr.getAttribute("role") === "article" || curr.dataset.pagelet) {
+          const anyPostLink = curr.querySelector('a[href*="/posts/"], a[href*="/permalink/"]');
+          if (anyPostLink && anyPostLink.href) {
+            return anyPostLink.href;
+          }
+        }
+      }
+
+      // Fallback to direct video src if available and not blob
+      if (video.currentSrc && !video.currentSrc.startsWith("blob:")) {
+        return video.currentSrc;
+      }
+      if (video.src && !video.src.startsWith("blob:")) {
+        return video.src;
+      }
+
+      return window.location.href;
+    }
+
     if (
       host.includes("youtube.com") ||
       host.includes("youtu.be") ||
       host.includes("tiktok.com") ||
-      host.includes("facebook.com") ||
       host.includes("twitter.com") ||
       host.includes("x.com") ||
       host.includes("instagram.com") ||

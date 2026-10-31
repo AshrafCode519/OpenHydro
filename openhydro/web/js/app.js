@@ -792,6 +792,9 @@ window.addEventListener('DOMContentLoaded', () => {
   if (playlistParam) {
     openPlaylistModal(playlistParam);
   }
+
+  // Silent background check for application updates
+  setTimeout(() => checkAppUpdates(false), 2500);
 });
 
 // --- Playlist Downloader (Snaptube / Vidmate Style) ---
@@ -1046,4 +1049,276 @@ function copyExtensionPath() {
   }).catch(() => {
     showToast('تعذر النسخ إلى الحافظة', 'error');
   });
+}
+
+
+// --- OpenHydro Intelligent Auto-Updater Controller ---
+let currentUpdateInfo = null;
+let updateDownloadTaskId = null;
+
+async function checkAppUpdates(showModal = false) {
+  const icon = document.getElementById('nav-update-icon');
+  if (icon) icon.classList.add('animate-spin');
+
+  if (showModal) {
+    openUpdateModal();
+    renderUpdateChecking();
+  }
+
+  try {
+    const res = await fetch('/api/updates/check');
+    if (!res.ok) throw new Error('تعذر الاتصال بخوادم التحديث');
+    const data = await res.json();
+    currentUpdateInfo = data;
+
+    const badge = document.getElementById('nav-update-badge');
+    if (data.has_update) {
+      if (badge) badge.classList.remove('hidden');
+      if (showModal) {
+        renderUpdateAvailable(data);
+      } else {
+        showToast(`🚀 يتوفر تحديث جديد: OpenHydro v${data.latest_version}! اضغط على زر التحديثات للترقية.`, 'info', 7000);
+      }
+    } else {
+      if (badge) badge.classList.add('hidden');
+      if (showModal) {
+        renderUpdateUpToDate(data);
+      }
+    }
+  } catch (e) {
+    if (showModal) {
+      renderUpdateError(e.message);
+    }
+  } finally {
+    if (icon) icon.classList.remove('animate-spin');
+    lucide.createIcons();
+  }
+}
+
+function openUpdateModal() {
+  document.getElementById('update-modal').classList.remove('hidden');
+}
+
+function closeUpdateModal() {
+  document.getElementById('update-modal').classList.add('hidden');
+}
+
+function renderUpdateChecking() {
+  const body = document.getElementById('update-modal-body');
+  const actions = document.getElementById('update-action-container');
+  body.innerHTML = `
+    <div class="flex flex-col items-center justify-center py-8 text-center space-y-3">
+      <div class="w-12 h-12 rounded-full border-2 border-cyan-500/20 border-t-cyan-400 animate-spin flex items-center justify-center"></div>
+      <p class="text-sm font-semibold text-gray-200">جاري فحص خوادم GitHub للبحث عن إصدارات جديدة...</p>
+      <p class="text-xs text-gray-400">التحقق من حزم التحديثات والتحسينات الرسمية</p>
+    </div>
+  `;
+  actions.innerHTML = '';
+  lucide.createIcons();
+}
+
+function renderUpdateUpToDate(data) {
+  const body = document.getElementById('update-modal-body');
+  const actions = document.getElementById('update-action-container');
+  body.innerHTML = `
+    <div class="flex flex-col items-center justify-center py-6 text-center space-y-3">
+      <div class="w-14 h-14 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shadow-lg shadow-emerald-500/10">
+        <i data-lucide="check-circle" class="w-8 h-8"></i>
+      </div>
+      <div>
+        <h4 class="text-base font-bold text-white">أنت تستخدم أحدث إصدار بالفعل!</h4>
+        <p class="text-xs text-emerald-400 font-mono mt-1">OpenHydro v${data.current_version}</p>
+      </div>
+      <p class="text-xs text-gray-400 max-w-sm">نظامك محدث بالكامل ومزود بأحدث محركات التجزئة 32-Thread وصيغ الفيديو وتكامل Google Drive وفيسبوك.</p>
+    </div>
+  `;
+  actions.innerHTML = `
+    <a href="${data.html_url}" target="_blank" class="px-4 py-2 rounded-xl text-xs font-semibold text-gray-300 hover:text-white glass-panel hover:bg-white/10 transition-all flex items-center gap-1.5">
+      <i data-lucide="github" class="w-3.5 h-3.5"></i>
+      <span>صفحة الإصدارات على GitHub</span>
+    </a>
+  `;
+  lucide.createIcons();
+}
+
+function renderUpdateAvailable(data) {
+  const body = document.getElementById('update-modal-body');
+  const actions = document.getElementById('update-action-container');
+
+  const notesFormatted = (data.release_notes || 'تحديث يتضمن تحسينات عامة للأداء واستقرار التنزيل.')
+    .replace(/^### (.*$)/gim, '<h5 class="font-bold text-xs text-cyan-300 mt-2">$1</h5>')
+    .replace(/^## (.*$)/gim, '<h4 class="font-bold text-sm text-cyan-200 mt-2">$1</h4>')
+    .replace(/^\* (.*$)/gim, '<li class="ml-2 text-gray-300">$1</li>')
+    .replace(/^- (.*$)/gim, '<li class="ml-2 text-gray-300">$1</li>');
+
+  body.innerHTML = `
+    <div class="space-y-4">
+      <div class="p-3.5 rounded-xl bg-cyan-950/30 border border-cyan-500/30 flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center text-white shadow-md shadow-cyan-500/30">
+            <i data-lucide="sparkles" class="w-5 h-5"></i>
+          </div>
+          <div>
+            <h4 class="text-sm font-bold text-white">${data.release_name}</h4>
+            <div class="flex items-center gap-2 mt-0.5 text-xs">
+              <span class="text-gray-400 font-mono">الإصدار الحالي: v${data.current_version}</span>
+              <span class="text-gray-600">•</span>
+              <span class="text-emerald-400 font-bold font-mono">الجديد: v${data.latest_version}</span>
+            </div>
+          </div>
+        </div>
+        <span class="px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[11px] font-bold">
+          تحديث متاح ⚡
+        </span>
+      </div>
+
+      <div class="space-y-1.5">
+        <label class="block text-xs font-semibold text-gray-300">ملاحظات الإصدار والتغييرات:</label>
+        <div class="max-h-40 overflow-y-auto p-3 rounded-xl bg-slate-950/50 border border-white/5 text-xs text-gray-300 space-y-1 font-sans">
+          ${notesFormatted}
+        </div>
+      </div>
+
+      <div id="update-download-progress-container" class="hidden space-y-2 p-3 rounded-xl bg-white/5 border border-white/10">
+        <div class="flex items-center justify-between text-xs">
+          <span id="update-progress-status" class="text-cyan-400 font-medium">جاري تنزيل ملف التحديث عبر محرك Turbo...</span>
+          <span id="update-progress-percent" class="font-mono text-gray-300">0%</span>
+        </div>
+        <div class="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
+          <div id="update-progress-bar" class="h-full bg-gradient-to-r from-cyan-500 to-blue-600 transition-all duration-200" style="width: 0%"></div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  actions.innerHTML = `
+    <a href="${data.html_url}" target="_blank" class="px-3 py-2 rounded-xl text-xs font-semibold text-gray-300 hover:text-white glass-panel hover:bg-white/10 transition-all flex items-center gap-1.5">
+      <i data-lucide="github" class="w-3.5 h-3.5"></i>
+      <span>عرض في GitHub</span>
+    </a>
+    <button id="btn-start-update" onclick="startAutoUpdate()" class="px-4 py-2 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 shadow-lg shadow-cyan-500/25 transition-all flex items-center gap-2 hover:scale-105 active:scale-95">
+      <i data-lucide="download" class="w-4 h-4"></i>
+      <span>تحميل وتثبيت التحديث الآن</span>
+    </button>
+  `;
+  lucide.createIcons();
+}
+
+function renderUpdateError(msg) {
+  const body = document.getElementById('update-modal-body');
+  const actions = document.getElementById('update-action-container');
+  body.innerHTML = `
+    <div class="flex flex-col items-center justify-center py-6 text-center space-y-3">
+      <div class="w-12 h-12 rounded-2xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400">
+        <i data-lucide="alert-triangle" class="w-6 h-6"></i>
+      </div>
+      <div>
+        <h4 class="text-sm font-bold text-white">تعذر فحص التحديثات</h4>
+        <p class="text-xs text-gray-400 mt-1">${msg}</p>
+      </div>
+    </div>
+  `;
+  actions.innerHTML = `
+    <button onclick="checkAppUpdates(true)" class="px-4 py-2 rounded-xl text-xs font-semibold text-white bg-white/10 hover:bg-white/20 transition-all flex items-center gap-1.5">
+      <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+      <span>إعادة المحاولة</span>
+    </button>
+  `;
+  lucide.createIcons();
+}
+
+async function startAutoUpdate() {
+  if (!currentUpdateInfo || !currentUpdateInfo.download_url) return;
+
+  const btn = document.getElementById('btn-start-update');
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i><span>جاري بدء التنزيل...</span>`;
+    lucide.createIcons();
+  }
+
+  const progContainer = document.getElementById('update-download-progress-container');
+  if (progContainer) progContainer.classList.remove('hidden');
+
+  try {
+    const res = await fetch('/api/updates/download', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        download_url: currentUpdateInfo.download_url,
+        filename: currentUpdateInfo.asset_name || null
+      })
+    });
+    if (!res.ok) throw new Error('فشل بدء تنزيل ملف التحديث');
+    const task = await res.json();
+    updateDownloadTaskId = task.id;
+
+    trackUpdateTask(task.id);
+  } catch (e) {
+    showToast(`خطأ في التحديث: ${e.message}`, 'error');
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = `<span>إعادة المحاولة</span>`;
+    }
+  }
+}
+
+async function trackUpdateTask(taskId) {
+  const interval = setInterval(async () => {
+    try {
+      const res = await fetch(`/api/tasks/${taskId}`);
+      if (!res.ok) {
+        clearInterval(interval);
+        return;
+      }
+      const task = await res.json();
+
+      const pct = Math.round(task.progress_percent || 0);
+      const bar = document.getElementById('update-progress-bar');
+      const pctText = document.getElementById('update-progress-percent');
+      const statusText = document.getElementById('update-progress-status');
+
+      if (bar) bar.style.width = `${pct}%`;
+      if (pctText) pctText.innerText = `${pct}% (${formatBytes(task.downloaded_bytes)} / ${formatBytes(task.total_bytes)})`;
+
+      if (task.status === 'completed') {
+        clearInterval(interval);
+        if (statusText) statusText.innerText = '✅ اكتمل تنزيل التحديث بنجاح!';
+        const btn = document.getElementById('btn-start-update');
+        if (btn) {
+          btn.disabled = false;
+          btn.className = 'px-5 py-2.5 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 shadow-lg shadow-emerald-500/25 transition-all flex items-center gap-2 hover:scale-105 active:scale-95 animate-pulse';
+          btn.innerHTML = `<i data-lucide="play" class="w-4 h-4 fill-white"></i><span>تثبيت التحديث وإعادة التشغيل الآن 🚀</span>`;
+          btn.onclick = () => launchUpdateInstaller(taskId);
+          lucide.createIcons();
+        }
+      } else if (task.status === 'error') {
+        clearInterval(interval);
+        if (statusText) statusText.innerText = '❌ فشل تنزيل ملف التحديث';
+      }
+    } catch (e) {
+      clearInterval(interval);
+    }
+  }, 500);
+}
+
+async function launchUpdateInstaller(taskId) {
+  try {
+    const res = await fetch('/api/updates/install', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task_id: taskId })
+    });
+    const data = await res.json();
+    if (data.status === 'success') {
+      showToast('🚀 تم إطلاق برنامج التثبيت بنجاح! سيتم إغلاق التطبيق للتحديث...', 'success', 5000);
+      setTimeout(() => {
+        window.close();
+      }, 2000);
+    } else {
+      showToast('تعذر فتح برنامج التثبيت تلقائياً، يمكنك فتحه يدوياً من مجلد التنزيلات.', 'warning');
+    }
+  } catch (e) {
+    showToast(`خطأ أثناء التثبيت: ${e.message}`, 'error');
+  }
 }

@@ -228,6 +228,15 @@ segment_1.ts
         self.assertEqual(len(pairs), 2)
         self.assertTrue(VideoExtractor.is_playlist_url(batch_text))
 
+        # Test Updater version comparison
+        from openhydro.core.updater import parse_version, is_newer_version
+        self.assertEqual(parse_version("v1.1.2"), (1, 1, 2))
+        self.assertEqual(parse_version("1.0.0"), (1, 0, 0))
+        self.assertTrue(is_newer_version("1.2.0", "1.1.2"))
+        self.assertTrue(is_newer_version("2.0.0", "1.9.9"))
+        self.assertFalse(is_newer_version("1.1.2", "1.1.2"))
+        self.assertFalse(is_newer_version("1.0.0", "1.1.2"))
+
 
 if __name__ == "__main__":
     unittest.main()

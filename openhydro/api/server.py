@@ -61,6 +61,16 @@ class PlaylistDownloadRequest(BaseModel):
     num_connections: int = Field(default=8, ge=1, le=32)
 
 
+class UpdateDownloadRequest(BaseModel):
+    download_url: str
+    filename: Optional[str] = None
+
+
+class UpdateInstallRequest(BaseModel):
+    task_id: Optional[str] = None
+    file_path: Optional[str] = None
+
+
 def create_app(engine: DownloadEngine) -> FastAPI:
     from .websocket import TelemetryHub
 
@@ -280,6 +290,42 @@ def create_app(engine: DownloadEngine) -> FastAPI:
         }
 
     # Browser Extension Info & Explorer Launcher
+    @app.get("/api/version")
+    async def get_app_version():
+        import openhydro
+        return {"version": openhydro.__version__}
+
+    @app.get("/api/updates/check")
+    async def check_updates():
+        import openhydro
+        from openhydro.core.updater import UpdateChecker
+        info = await UpdateChecker.check_for_updates(openhydro.__version__)
+        return info
+
+    @app.post("/api/updates/download")
+    async def download_update(req: UpdateDownloadRequest):
+        task = await engine.add_download(
+            url=req.download_url,
+            filename=req.filename,
+            save_dir=engine.download_dir,
+            num_connections=16,
+            auto_start=True,
+        )
+        return task.to_dict()
+
+    @app.post("/api/updates/install")
+    async def install_update(req: UpdateInstallRequest):
+        from openhydro.core.updater import UpdateChecker
+        target_path = req.file_path
+        if req.task_id and req.task_id in engine.tasks:
+            target_path = engine.tasks[req.task_id].save_path
+
+        if not target_path or not os.path.exists(target_path):
+            raise HTTPException(status_code=404, detail="ملف التحديث غير موجود على القرص")
+
+        success = UpdateChecker.launch_installer(target_path)
+        return {"status": "success" if success else "failed", "path": target_path}
+
     @app.get("/api/extension/info")
     async def get_extension_info():
         import subprocess

@@ -20,6 +20,7 @@ from .worker import ChunkWorker, DEFAULT_USER_AGENT, MAX_RETRIES, RETRY_BACKOFF_
 from .hls import HLSStreamParser, HLSDownloader
 from .scheduler import SmartScheduler
 from .extractor import VideoExtractor
+from .torrent import TorrentManager
 
 
 class DownloadEngine:
@@ -31,6 +32,7 @@ class DownloadEngine:
         self._listeners: List[Callable] = []
         self._lock = threading.Lock()
         self.scheduler = SmartScheduler(self)
+        self.torrent_manager = TorrentManager(self.download_dir)
         self.auto_shutdown_enabled = False
 
         # Restore saved tasks from disk
@@ -235,6 +237,44 @@ class DownloadEngine:
         auto_start: bool = True,
         format_id: Optional[str] = None,
     ) -> DownloadTask:
+        # Check if Magnet or Torrent link
+        if url.startswith("magnet:") or url.lower().endswith(".torrent") or (filename and filename.lower().endswith(".torrent")):
+            target_save_dir = save_dir or StorageManager.get_category_dir(self.download_dir, "torrent")
+            os.makedirs(target_save_dir, exist_ok=True)
+
+            if url.startswith("magnet:"):
+                minfo = TorrentManager.parse_magnet_info(url)
+                t_filename = filename or minfo["name"] or "Torrent_Download"
+                t_total = minfo.get("total_size", 0)
+            else:
+                t_filename = filename or os.path.basename(url) or "download.torrent"
+                t_total = 0
+
+            target_path = os.path.join(target_save_dir, t_filename)
+
+            task = DownloadTask(
+                url=url,
+                filename=t_filename,
+                save_path=target_path,
+                total_bytes=t_total,
+                supports_ranges=True,
+                num_connections=16,
+                is_torrent=True,
+                category="torrent",
+            )
+            task.chunks = [Chunk(id=0, start_byte=0, end_byte=max(0, t_total - 1), current_byte=0)]
+
+            with self._lock:
+                self.tasks[task.id] = task
+
+            StorageManager.save_task_meta(task)
+            self._notify("task_added", task)
+
+            if auto_start:
+                asyncio.create_task(self.start_task(task.id))
+
+            return task
+
         save_dir = save_dir or self.download_dir
         os.makedirs(save_dir, exist_ok=True)
 
@@ -343,6 +383,11 @@ class DownloadEngine:
         self._running_loops[task_id] = loop_task
 
     async def _execute_download(self, task: DownloadTask):
+        # -1. BitTorrent & Magnet Link Workflow
+        if task.is_torrent:
+            await self._execute_torrent_download(task)
+            return
+
         # 0. Video Platform Extractor Workflow (YouTube, TikTok, Facebook, etc.)
         if task.is_extractor:
             await self._execute_extractor_download(task)
@@ -667,12 +712,118 @@ class DownloadEngine:
         finally:
             StorageManager.save_task_meta(task)
 
+    async def _execute_torrent_download(self, task: DownloadTask):
+        """Downloads BitTorrent or Magnet links via embedded aria2 JSON-RPC engine."""
+        if not self.torrent_manager.is_available():
+            task.status = TaskStatus.ERROR
+            task.error_message = "محرك التورنت (aria2c) غير مثبت أو غير متاح"
+            self._notify("task_error", task)
+            return
+
+        target_save_dir = os.path.dirname(task.save_path)
+        os.makedirs(target_save_dir, exist_ok=True)
+
+        try:
+            # If GID doesn't exist yet, add URI or .torrent file
+            if not task.torrent_gid:
+                if task.url.startswith("magnet:"):
+                    gid = await self.torrent_manager.add_magnet(task.url, save_dir=target_save_dir)
+                elif task.url.lower().endswith(".torrent"):
+                    if os.path.exists(task.url):
+                        gid = await self.torrent_manager.add_torrent_file(task.url, save_dir=target_save_dir)
+                    else:
+                        async with httpx.AsyncClient(timeout=15.0) as client:
+                            r = await client.get(task.url, follow_redirects=True)
+                            r.raise_for_status()
+                            gid = await self.torrent_manager.add_torrent_file(r.content, save_dir=target_save_dir)
+                else:
+                    gid = await self.torrent_manager.add_magnet(task.url, save_dir=target_save_dir)
+                task.torrent_gid = gid
+                StorageManager.save_task_meta(task)
+
+            # Polling loop
+            while task.status == TaskStatus.DOWNLOADING:
+                await asyncio.sleep(1.0)
+                status = await self.torrent_manager.tell_status(task.torrent_gid)
+                if not status:
+                    continue
+
+                state = status.get("status")  # active, waiting, paused, error, complete, removed
+                completed_len = int(status.get("completedLength", 0))
+                total_len = int(status.get("totalLength", 0))
+                speed = float(status.get("downloadSpeed", 0.0))
+                seeders = int(status.get("numSeeders", 0))
+                connections = int(status.get("connections", 0))
+
+                task.total_bytes = max(task.total_bytes, total_len)
+                task.speed = speed
+                task.seeders = seeders
+                task.peers = connections
+
+                if task.chunks:
+                    task.chunks[0].current_byte = completed_len
+                    task.chunks[0].end_byte = max(0, total_len - 1)
+                    task.chunks[0].status = "downloading"
+
+                # Check if torrent meta resolved real filename
+                bt_info = status.get("bittorrent", {}).get("info", {})
+                if bt_info.get("name") and bt_info["name"] != task.filename:
+                    task.filename = bt_info["name"]
+                    task.save_path = os.path.join(target_save_dir, task.filename)
+
+                if speed > 0 and total_len > completed_len:
+                    task.eta_seconds = int((total_len - completed_len) / speed)
+                else:
+                    task.eta_seconds = None
+
+                if state == "complete":
+                    task.status = TaskStatus.COMPLETED
+                    task.completed_at = time.time()
+                    task.speed = 0.0
+                    task.eta_seconds = 0
+                    if task.chunks:
+                        task.chunks[0].status = "completed"
+                        task.chunks[0].current_byte = total_len
+                    StorageManager.save_task_meta(task)
+                    self._notify("task_completed", task)
+                    return
+
+                if state == "error":
+                    err_msg = status.get("errorMessage", "حدث خطأ أثناء تحميل التورنت")
+                    task.status = TaskStatus.ERROR
+                    task.error_message = err_msg
+                    self._notify("task_error", task)
+                    return
+
+                self._notify("task_progress", task)
+                StorageManager.save_task_meta(task)
+
+        except asyncio.CancelledError:
+            task.status = TaskStatus.PAUSED
+            task.speed = 0.0
+            if task.torrent_gid:
+                await self.torrent_manager.pause(task.torrent_gid)
+            self._notify("task_updated", task)
+        except Exception as e:
+            print(f"[Engine] Torrent error: {e}")
+            task.status = TaskStatus.ERROR
+            task.error_message = str(e)
+            self._notify("task_error", task)
+        finally:
+            StorageManager.save_task_meta(task)
+
     async def pause_task(self, task_id: str):
         task = self.tasks.get(task_id)
         if task and task.status == TaskStatus.DOWNLOADING:
             task.status = TaskStatus.PAUSED
             task.speed = 0.0
             task.eta_seconds = None
+
+            if task.is_torrent and task.torrent_gid:
+                try:
+                    await self.torrent_manager.pause(task.torrent_gid)
+                except Exception:
+                    pass
 
             # Cancel running asyncio loop task for immediate stop
             loop_task = self._running_loops.get(task_id)
@@ -685,6 +836,11 @@ class DownloadEngine:
     async def resume_task(self, task_id: str):
         task = self.tasks.get(task_id)
         if task and task.status in (TaskStatus.PAUSED, TaskStatus.ERROR):
+            if task.is_torrent and task.torrent_gid:
+                try:
+                    await self.torrent_manager.resume(task.torrent_gid)
+                except Exception:
+                    pass
             # Reset chunk statuses from error/downloading to idle
             for c in task.chunks:
                 if c.status in ("failed", "downloading") or c.current_byte <= c.end_byte:
@@ -720,6 +876,11 @@ class DownloadEngine:
         if task:
             task.status = TaskStatus.CANCELLED
             task.speed = 0.0
+            if task.is_torrent and task.torrent_gid:
+                try:
+                    await self.torrent_manager.remove(task.torrent_gid)
+                except Exception:
+                    pass
             loop_task = self._running_loops.get(task_id)
             if loop_task and not loop_task.done():
                 loop_task.cancel()

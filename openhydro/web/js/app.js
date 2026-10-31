@@ -44,6 +44,7 @@ function getCategoryIcon(cat) {
     case 'compressed': return 'archive';
     case 'document': return 'file-text';
     case 'program': return 'box';
+    case 'torrent': return 'magnet';
     default: return 'file';
   }
 }
@@ -234,7 +235,7 @@ function renderTasks() {
     if (currentCategory === 'downloading' && task.status !== 'downloading') return false;
     if (currentCategory === 'completed' && task.status !== 'completed') return false;
     if (currentCategory === 'paused' && task.status !== 'paused') return false;
-    if (['video', 'audio', 'compressed', 'document', 'program'].includes(currentCategory)) {
+    if (['video', 'audio', 'compressed', 'document', 'program', 'torrent'].includes(currentCategory)) {
       if (task.category !== currentCategory) return false;
     }
 
@@ -302,6 +303,13 @@ function renderTaskCard(task) {
     `;
   }
 
+  const torrentBadge = task.is_torrent ? `
+    <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-orange-500/10 text-orange-400 border border-orange-500/30">
+      <i data-lucide="magnet" class="w-3 h-3"></i>
+      <span>تورنت (S:${task.seeders || 0} | P:${task.peers || 0})</span>
+    </span>
+  ` : '';
+
   // Segment visualization html
   const chunksHtml = task.chunks && task.chunks.length > 0 ? `
     <div class="mt-3 pt-3 border-t border-white/5">
@@ -334,6 +342,7 @@ function renderTaskCard(task) {
             <div class="flex items-center gap-2 flex-wrap">
               <h3 class="font-semibold text-sm text-gray-100 truncate" title="${task.filename}">${task.filename}</h3>
               ${statusBadge}
+              ${torrentBadge}
             </div>
             <p class="text-xs text-gray-400 truncate mt-0.5 font-mono">${task.url}</p>
           </div>
@@ -1479,5 +1488,39 @@ async function launchUpdateInstaller(taskId) {
     }
   } catch (e) {
     showToast(`خطأ أثناء التثبيت: ${e.message}`, 'error');
+  }
+}
+
+// Mobile Remote Dashboard & QR
+async function openMobileRemoteModal() {
+  const modal = document.getElementById('mobile-modal');
+  if (!modal) return;
+  modal.classList.remove('hidden');
+  lucide.createIcons();
+
+  try {
+    const res = await fetch('/api/system/remote_info');
+    const data = await res.json();
+    const urlText = document.getElementById('mobile-remote-url-text');
+    const qrImg = document.getElementById('mobile-qr-image');
+    if (urlText) urlText.innerText = data.url;
+    if (qrImg) {
+      qrImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(data.url)}`;
+    }
+  } catch (e) {
+    console.error('Failed to load remote info:', e);
+  }
+}
+
+function closeMobileRemoteModal() {
+  const modal = document.getElementById('mobile-modal');
+  if (modal) modal.classList.add('hidden');
+}
+
+function copyRemoteUrl() {
+  const urlText = document.getElementById('mobile-remote-url-text');
+  if (urlText) {
+    navigator.clipboard.writeText(urlText.innerText);
+    showToast('تم نسخ رابط التحكم بالموبايل بنجاح!', 'success');
   }
 }

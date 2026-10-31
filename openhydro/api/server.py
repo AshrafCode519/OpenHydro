@@ -447,6 +447,31 @@ def create_app(engine: DownloadEngine) -> FastAPI:
             "total_speed": total_speed,
         }
 
+    @app.get("/api/system/remote_info")
+    async def get_remote_info():
+        import socket
+        local_ip = "127.0.0.1"
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            local_ip = s.getsockname()[0]
+            s.close()
+        except Exception:
+            try:
+                local_ip = socket.gethostbyname(socket.gethostname())
+            except Exception:
+                local_ip = "127.0.0.1"
+
+        port = 8765
+        remote_url = f"http://{local_ip}:{port}"
+        return {
+            "ip": local_ip,
+            "port": port,
+            "url": remote_url,
+            "active_tasks": sum(1 for t in engine.tasks.values() if t.status == TaskStatus.DOWNLOADING),
+            "total_tasks": len(engine.tasks),
+        }
+
     # Browser Extension Info & Explorer Launcher
     @app.get("/api/version")
     async def get_app_version():

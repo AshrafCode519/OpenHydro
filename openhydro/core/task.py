@@ -91,6 +91,10 @@ class DownloadTask:
     hls_info: Optional[Dict[str, Any]] = None
     is_extractor: bool = False
     selected_format: Optional[str] = None
+    is_torrent: bool = False
+    torrent_gid: Optional[str] = None
+    seeders: int = 0
+    peers: int = 0
 
     @property
     def downloaded_bytes(self) -> int:
@@ -111,6 +115,8 @@ class DownloadTask:
     @classmethod
     def determine_category_for_filename(cls, filename: str) -> str:
         name = filename.lower()
+        if name.endswith(".torrent") or name.startswith("magnet:"):
+            return "torrent"
         if any(name.endswith(ext) for ext in [".mp4", ".mkv", ".avi", ".mov", ".flv", ".webm", ".ts"]):
             return "video"
         if any(name.endswith(ext) for ext in [".mp3", ".wav", ".aac", ".flac", ".ogg", ".m4a"]):
@@ -124,6 +130,8 @@ class DownloadTask:
         return "other"
 
     def determine_category(self) -> str:
+        if self.is_torrent or self.url.startswith("magnet:"):
+            return "torrent"
         return self.determine_category_for_filename(self.filename)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -147,5 +155,9 @@ class DownloadTask:
             "is_hls": self.is_hls,
             "is_extractor": self.is_extractor,
             "selected_format": self.selected_format,
+            "is_torrent": self.is_torrent,
+            "torrent_gid": self.torrent_gid,
+            "seeders": self.seeders,
+            "peers": self.peers,
             "chunks": [c.to_dict() for c in self.chunks],
         }

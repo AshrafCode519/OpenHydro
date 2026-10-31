@@ -17,6 +17,7 @@ class StorageManager:
         "audio": "Music",
         "compressed": "Compressed",
         "document": "Documents",
+        "torrent": "Torrents",
         "other": "",
     }
 

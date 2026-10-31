@@ -275,6 +275,26 @@ segment_1.ts
         self.assertFalse(is_newer_version("1.1.2", "1.1.2"))
         self.assertFalse(is_newer_version("1.0.0", "1.1.2"))
 
+    def test_torrent_magnet_parsing(self):
+        from openhydro.core.torrent import TorrentManager
+        from openhydro.core.task import DownloadTask
+
+        magnet = "magnet:?xt=urn:btih:d6b6e4e427181c4e7c7a5223cf20a2e576082e66&dn=Ubuntu+22.04+Desktop&tr=udp%3A%2F%2Ftracker.openbittorrent.com%3A80"
+        info = TorrentManager.parse_magnet_info(magnet)
+        self.assertEqual(info["name"], "Ubuntu 22.04 Desktop")
+        self.assertEqual(info["info_hash"], "d6b6e4e427181c4e7c7a5223cf20a2e576082e66")
+        self.assertEqual(len(info["trackers"]), 1)
+
+        task = DownloadTask(url=magnet, filename="Ubuntu.torrent", save_path="ubuntu.torrent", is_torrent=True)
+        self.assertEqual(task.determine_category(), "torrent")
+
+    def test_torrent_binary_available(self):
+        from openhydro.core.torrent import TorrentManager
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            mgr = TorrentManager(td)
+            self.assertTrue(mgr.is_available())
+
 
 if __name__ == "__main__":
     unittest.main()

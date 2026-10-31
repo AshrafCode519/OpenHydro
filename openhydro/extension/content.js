@@ -156,14 +156,17 @@
       try {
         const parsed = JSON.parse(savedPos);
         if (parsed.top !== undefined && parsed.left !== undefined) {
-          wrapper.style.top = parsed.top;
-          wrapper.style.left = parsed.left;
+          wrapper.style.setProperty("top", parsed.top, "important");
+          wrapper.style.setProperty("left", parsed.left, "important");
         }
       } catch (e) {}
     } else if (isFacebook) {
       // Default safely below Facebook's top header controls (author name, volume, pause)
-      wrapper.style.top = "54px";
-      wrapper.style.left = "14px";
+      wrapper.style.setProperty("top", "76px", "important");
+      wrapper.style.setProperty("left", "16px", "important");
+    } else {
+      wrapper.style.setProperty("top", "14px", "important");
+      wrapper.style.setProperty("left", "14px", "important");
     }
 
     // Create Floating Button
@@ -216,8 +219,8 @@
         newX = Math.max(4, Math.min(newX, cWidth - wrapper.offsetWidth - 4));
         newY = Math.max(4, Math.min(newY, cHeight - wrapper.offsetHeight - 4));
 
-        wrapper.style.left = `${newX}px`;
-        wrapper.style.top = `${newY}px`;
+        wrapper.style.setProperty("left", `${newX}px`, "important");
+        wrapper.style.setProperty("top", `${newY}px`, "important");
       }
     });
 

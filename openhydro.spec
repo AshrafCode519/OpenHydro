@@ -50,6 +50,7 @@ datas = [
     ('openhydro/web', 'openhydro/web'),
     ('openhydro/extension', 'openhydro/extension'),
     ('openhydro/extension', 'extension'),
+    ('openhydro/bin', 'openhydro/bin'),
     ('assets', 'assets'),
 ]
 

@@ -98,6 +98,12 @@
         </span>
       </button>
 
+      <!-- Mobile Remote Control Button -->
+      <button onclick="openMobileRemoteModal()" title="التحكم الكامل عبر الموبايل عن بُعد بنفس شبكة Wi-Fi" class="flex items-center gap-1.5 px-3 py-2 rounded-xl glass-panel glass-panel-hover text-xs text-amber-300 border border-amber-500/30 transition-all hover:scale-105 active:scale-95">
+        <i data-lucide="smartphone" class="w-4 h-4 text-amber-400"></i>
+        <span>الموبايل</span>
+      </button>
+
       <!-- Speed Limiter Quick Menu -->
       <div class="relative group">
         <button id="limiter-btn" class="flex items-center gap-2 px-3 py-2 rounded-xl glass-panel glass-panel-hover text-xs text-gray-300">
@@ -189,6 +195,10 @@
             <i data-lucide="box" class="w-4 h-4 text-emerald-400"></i>
             <span>برامج وتطبيقات</span>
           </button>
+          <button onclick="setCategoryFilter('torrent')" class="category-btn w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm text-gray-300 hover:bg-white/5" data-cat="torrent">
+            <i data-lucide="magnet" class="w-4 h-4 text-orange-400"></i>
+            <span>ملفات وتورنت (Torrents)</span>
+          </button>
         </nav>
       </div>
 
@@ -249,7 +259,7 @@
         <div>
           <label class="block text-xs font-semibold text-gray-300 mb-1">رابط التحميل (URL):</label>
           <div class="relative">
-            <input type="text" id="modal-url-input" oninput="onUrlInputDebounced()" placeholder="https://example.com/file.zip" class="w-full px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-sm focus:outline-none focus:border-cyan-500">
+            <input type="text" id="modal-url-input" oninput="onUrlInputDebounced()" placeholder="https://... أو magnet:?xt=... أو ملف تورنت" class="w-full px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-sm focus:outline-none focus:border-cyan-500">
             <span id="modal-probe-spinner" class="absolute left-3 top-2.5 hidden">
               <i data-lucide="loader-2" class="w-4 h-4 text-cyan-400 animate-spin"></i>
             </span>
@@ -655,6 +665,50 @@
           <span>فتح في المشغل الخارجي (VLC / Media Player)</span>
         </button>
       </div>
+    </div>
+  </div>
+
+  <!-- Mobile Remote Control Modal (QR Code & Wi-Fi URL) -->
+  <div id="mobile-modal" class="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center hidden p-4">
+    <div class="glass-panel w-full max-w-md rounded-3xl p-6 border border-amber-500/30 shadow-2xl flex flex-col items-center text-center space-y-4">
+      <div class="flex items-center justify-between w-full border-b border-white/10 pb-3">
+        <div class="flex items-center gap-2 text-amber-400 font-bold text-sm">
+          <i data-lucide="smartphone" class="w-5 h-5 text-amber-400"></i>
+          <span>التحكم عن بُعد عبر الموبايل (OpenHydro Remote)</span>
+        </div>
+        <button onclick="closeMobileRemoteModal()" class="text-gray-400 hover:text-white p-1 rounded-lg hover:bg-white/5 transition-all">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <p class="text-xs text-gray-300 leading-relaxed">
+        تحكم في التنزيلات، أضف روابط جديدة، وتابع سرعة التحميل مباشرة من هاتفك الذكي المتصل بنفس شبكة الـ Wi-Fi!
+      </p>
+
+      <!-- QR Code Container -->
+      <div class="p-3 bg-white rounded-2xl shadow-xl flex items-center justify-center border-4 border-amber-500/20">
+        <img id="mobile-qr-image" src="" alt="QR Code" class="w-48 h-48 rounded-xl object-contain" />
+      </div>
+
+      <!-- Live Remote URL & Copy -->
+      <div class="w-full">
+        <div class="flex items-center justify-between px-3 py-2 bg-slate-900/90 rounded-xl border border-white/10 text-xs">
+          <span id="mobile-remote-url-text" class="text-amber-300 font-mono select-all truncate">http://127.0.0.1:8765</span>
+          <button onclick="copyRemoteUrl()" class="flex items-center gap-1 px-3 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 rounded-lg font-medium transition-all">
+            <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+            <span>نسخ</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-2 text-[11px] text-gray-400">
+        <i data-lucide="wifi" class="w-3.5 h-3.5 text-emerald-400"></i>
+        <span>لا يتطلب أي تطبيق إضافي، يعمل مباشرة عبر متصفح هاتفك.</span>
+      </div>
+
+      <button onclick="closeMobileRemoteModal()" class="w-full py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-gray-200 text-xs font-semibold transition-all">
+        إغلاق
+      </button>
     </div>
   </div>
 

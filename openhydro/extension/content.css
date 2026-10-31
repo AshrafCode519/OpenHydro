@@ -6,8 +6,8 @@
 
 .openhydro-wrapper {
   position: absolute !important;
-  top: 14px !important;
-  left: 14px !important;
+  top: 14px;
+  left: 14px;
   z-index: 2147483647 !important;
   direction: rtl !important;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, sans-serif !important;

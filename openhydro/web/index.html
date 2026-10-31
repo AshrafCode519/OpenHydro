@@ -619,6 +619,59 @@
     </div>
   </div>
 
+  <!-- Video Preview Modal (Stream & Watch while Downloading) -->
+  <div id="preview-modal" class="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center hidden p-4">
+    <div class="glass-panel w-full max-w-3xl rounded-2xl p-6 border border-cyan-500/30 shadow-2xl flex flex-col space-y-4">
+      <div class="flex items-center justify-between border-b border-white/10 pb-3">
+        <div class="flex items-center gap-2 text-cyan-400 font-semibold text-base">
+          <i data-lucide="play-circle" class="w-5 h-5 text-cyan-400"></i>
+          <span>معاينة وتشغيل الفيديو الفوري (OpenHydro Preview)</span>
+        </div>
+        <button onclick="closePreviewModal()" class="text-gray-400 hover:text-white p-1 rounded-lg hover:bg-white/5 transition-all">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <div class="space-y-2">
+        <div class="flex items-center justify-between text-xs text-gray-300">
+          <span id="preview-filename" class="font-semibold text-white truncate max-w-[450px]">video.mp4</span>
+          <span id="preview-status-badge" class="px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 text-[10px] font-mono">جاري البث المباشر</span>
+        </div>
+        <div class="relative rounded-xl overflow-hidden bg-black/90 border border-white/10 shadow-2xl">
+          <video id="preview-player" controls autoplay class="w-full max-h-[60vh] object-contain"></video>
+        </div>
+        <p class="text-[11px] text-gray-400 flex items-center gap-1.5">
+          <i data-lucide="info" class="w-3.5 h-3.5 text-cyan-400"></i>
+          <span>يمكنك مشاهدة الفيديو من بدايته الآن وتخطي المقاطع حتى أثناء استمرار عملية التنزيل في الخلفية.</span>
+        </p>
+      </div>
+
+      <div class="flex items-center justify-between border-t border-white/10 pt-3">
+        <button onclick="closePreviewModal()" class="px-4 py-2 rounded-xl text-xs font-semibold text-gray-400 hover:text-white hover:bg-white/5 transition-all">
+          إغلاق المعاينة
+        </button>
+        <button id="preview-ext-btn" onclick="openExternalPreview()" class="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-gray-200 hover:text-white text-xs font-semibold transition-all flex items-center gap-1.5">
+          <i data-lucide="external-link" class="w-3.5 h-3.5 text-cyan-400"></i>
+          <span>فتح في المشغل الخارجي (VLC / Media Player)</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Auto-Shutdown Countdown Floating Banner -->
+  <div id="shutdown-banner" class="fixed bottom-6 left-6 z-50 p-4 rounded-2xl glass-panel border border-amber-500/40 shadow-2xl flex items-center gap-4 hidden bg-slate-950/90 backdrop-blur-xl">
+    <div class="w-11 h-11 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center font-bold text-lg font-mono" id="shutdown-timer">
+      60
+    </div>
+    <div>
+      <h4 class="font-bold text-sm text-white">اكتملت كافة التنزيلات بنجاح!</h4>
+      <p class="text-xs text-amber-300/80">سيتم إيقاف تشغيل الكمبيوتر خلال ثوانٍ.</p>
+    </div>
+    <button onclick="cancelShutdown()" class="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold transition-all shadow-lg shadow-rose-600/30">
+      إلغاء الإطفاء
+    </button>
+  </div>
+
   <!-- Modern Luxury Confirmation Modal (Replaces ugly browser confirm) -->
   <div id="app-confirm-modal" class="fixed inset-0 z-[99999] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md hidden transition-all duration-200">
     <div class="glass-panel w-full max-w-sm rounded-2xl p-6 shadow-2xl border border-white/10 text-center relative overflow-hidden">

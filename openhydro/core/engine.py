@@ -9,7 +9,7 @@ import time
 import asyncio
 import threading
 from urllib.parse import urlparse, unquote
-from typing import Dict, List, Optional, Callable
+from typing import Dict, List, Optional, Callable, Any
 import httpx
 
 from .task import DownloadTask, Chunk, TaskStatus
@@ -31,6 +31,7 @@ class DownloadEngine:
         self._listeners: List[Callable] = []
         self._lock = threading.Lock()
         self.scheduler = SmartScheduler(self)
+        self.auto_shutdown_enabled = False
 
         # Restore saved tasks from disk
         self._restore_persisted_tasks()
@@ -48,12 +49,49 @@ class DownloadEngine:
     def register_listener(self, callback: Callable):
         self._listeners.append(callback)
 
-    def _notify(self, event_type: str, task: DownloadTask):
+    def _notify(self, event_type: str, task: Any):
+        payload = task.to_dict() if hasattr(task, "to_dict") else task
         for listener in self._listeners:
             try:
-                listener(event_type, task.to_dict())
+                listener(event_type, payload)
             except Exception as e:
                 print(f"[Engine] Listener error: {e}")
+        if event_type == "task_completed":
+            self._check_auto_shutdown()
+
+    def _check_auto_shutdown(self):
+        """Checks if all tasks are finished and triggers auto-shutdown if enabled."""
+        if not getattr(self, "auto_shutdown_enabled", False):
+            return
+
+        with self._lock:
+            active = any(t.status == TaskStatus.DOWNLOADING for t in self.tasks.values())
+            if not active and len(self.tasks) > 0:
+                self._trigger_system_shutdown()
+
+    def _trigger_system_shutdown(self):
+        import subprocess
+        try:
+            if sys.platform.startswith("win"):
+                subprocess.Popen(["shutdown", "/s", "/t", "60", "/c", "OpenHydro: اكتملت كافة التحميلات. سيتم إيقاف تشغيل الكمبيوتر خلال 60 ثانية."])
+            elif sys.platform.startswith("darwin") or sys.platform.startswith("linux"):
+                subprocess.Popen(["shutdown", "-h", "+1", "OpenHydro: downloads completed"])
+            self._notify("auto_shutdown_triggered", {"countdown": 60})
+        except Exception as e:
+            print(f"[AutoShutdown] Error: {e}")
+
+    @staticmethod
+    def cancel_system_shutdown() -> bool:
+        import subprocess
+        try:
+            if sys.platform.startswith("win"):
+                subprocess.run(["shutdown", "/a"], capture_output=True)
+                return True
+            else:
+                subprocess.run(["shutdown", "-c"], capture_output=True)
+                return True
+        except Exception:
+            return False
 
     @staticmethod
     async def probe_url(url: str, custom_headers: Optional[Dict[str, str]] = None) -> Dict:

@@ -172,6 +172,8 @@ function handleWebSocketMessage(msg) {
     tasks[data.id] = data;
   } else if (type === 'task_cancelled') {
     delete tasks[data.id];
+  } else if (type === 'auto_shutdown_triggered') {
+    handleShutdownNotification(data?.countdown || 60);
   }
 
   updateGlobalStats();
@@ -340,11 +342,22 @@ function renderTaskCard(task) {
         <!-- Action Buttons -->
         <div class="flex items-center gap-1.5 shrink-0">
           ${isCompleted ? `
+            ${(task.category === 'compressed' || task.filename.endsWith('.zip') || task.filename.endsWith('.tar.gz') || task.filename.endsWith('.tar')) ? `
+              <button onclick="extractTaskArchive('${task.id}')" title="استخراج وفك ضغط الأرشيف" class="p-2 rounded-xl glass-panel hover:bg-purple-500/20 text-purple-400 transition-colors">
+                <i data-lucide="archive" class="w-4 h-4"></i>
+              </button>
+            ` : ''}
             <button onclick="openTaskFile('${task.id}')" title="تشغيل / فتح الملف" class="p-2 rounded-xl glass-panel hover:bg-emerald-500/20 text-emerald-400 transition-colors">
               <i data-lucide="play" class="w-4 h-4"></i>
             </button>
             <button onclick="openTaskFolder('${task.id}')" title="فتح المجلد في Explorer" class="p-2 rounded-xl glass-panel hover:bg-cyan-500/20 text-cyan-400 transition-colors">
               <i data-lucide="folder-open" class="w-4 h-4"></i>
+            </button>
+          ` : ''}
+
+          ${(!isCompleted && (task.category === 'video' || ['.mp4', '.mkv', '.webm', '.avi', '.mov', '.ts'].some(ext => task.filename.toLowerCase().endsWith(ext)))) ? `
+            <button onclick="openVideoPreview('${task.id}')" title="معاينة وتشغيل الفيديو أثناء التحميل" class="p-2 rounded-xl glass-panel hover:bg-cyan-500/20 text-cyan-400 transition-colors">
+              <i data-lucide="play-circle" class="w-4 h-4"></i>
             </button>
           ` : ''}
 
@@ -487,6 +500,118 @@ async function openTaskFolder(id) {
     showToast('تعذر فتح المجلد: ' + (data.detail || data.message || 'المجلد غير موجود'), 'warning');
   } catch (e) {
     showToast('حدث خطأ أثناء فتح المجلد: ' + e, 'error');
+  }
+}
+
+async function extractTaskArchive(id) {
+  try {
+    showToast('📦 جاري فك ضغط الأرشيف...', 'info');
+    const res = await fetch(`/api/tasks/${id}/extract`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.status === 'success') {
+      showToast(`✅ تم فك الضغط بنجاح في مجلد: ${data.extracted_to}`, 'success');
+      return;
+    }
+    showToast('تعذر فك الضغط: ' + (data.detail || data.message || 'صيغة غير مدعومة'), 'warning');
+  } catch (e) {
+    showToast('حدث خطأ أثناء فك الضغط: ' + e, 'error');
+  }
+}
+
+// --- Video Preview Controller (Instant Stream while downloading) ---
+let currentPreviewTaskId = null;
+
+function openVideoPreview(taskId) {
+  const task = tasks[taskId];
+  if (!task) return;
+  currentPreviewTaskId = taskId;
+
+  const modal = document.getElementById('preview-modal');
+  const filenameEl = document.getElementById('preview-filename');
+  const player = document.getElementById('preview-player');
+  const badgeEl = document.getElementById('preview-status-badge');
+
+  if (filenameEl) filenameEl.innerText = task.filename;
+  if (badgeEl) {
+    if (task.status === 'completed') {
+      badgeEl.innerText = 'مكتمل - تشغيل كامل';
+      badgeEl.className = 'px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-mono';
+    } else {
+      badgeEl.innerText = `معاينة فورية أثناء التحميل (${task.progress_percent}%)`;
+      badgeEl.className = 'px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 text-[10px] font-mono';
+    }
+  }
+
+  if (player) {
+    player.src = `/api/tasks/${taskId}/preview_stream?t=${Date.now()}`;
+    player.load();
+    player.play().catch(() => {});
+  }
+
+  modal.classList.remove('hidden');
+  lucide.createIcons();
+}
+
+function closePreviewModal() {
+  const modal = document.getElementById('preview-modal');
+  const player = document.getElementById('preview-player');
+  if (player) {
+    player.pause();
+    player.src = '';
+  }
+  currentPreviewTaskId = null;
+  modal.classList.add('hidden');
+}
+
+async function openExternalPreview() {
+  if (!currentPreviewTaskId) return;
+  try {
+    const res = await fetch(`/api/tasks/${currentPreviewTaskId}/preview_external`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.status === 'success') {
+      showToast('🚀 تم فتح المعاينة في المشغل الخارجي بنجاح!', 'success');
+      return;
+    }
+    showToast('تعذر فتح المشغل الخارجي: ' + (data.detail || data.message || 'خطأ'), 'warning');
+  } catch (e) {
+    showToast('حدث خطأ: ' + e, 'error');
+  }
+}
+
+// --- Auto-Shutdown Controller ---
+let shutdownCountdownInterval = null;
+
+function handleShutdownNotification(countdownSec = 60) {
+  const banner = document.getElementById('shutdown-banner');
+  const timerEl = document.getElementById('shutdown-timer');
+  if (!banner || !timerEl) return;
+
+  banner.classList.remove('hidden');
+  let remaining = countdownSec;
+  timerEl.innerText = remaining;
+
+  if (shutdownCountdownInterval) clearInterval(shutdownCountdownInterval);
+  shutdownCountdownInterval = setInterval(() => {
+    remaining -= 1;
+    timerEl.innerText = remaining;
+    if (remaining <= 0) {
+      clearInterval(shutdownCountdownInterval);
+      shutdownCountdownInterval = null;
+    }
+  }, 1000);
+}
+
+async function cancelShutdown() {
+  if (shutdownCountdownInterval) {
+    clearInterval(shutdownCountdownInterval);
+    shutdownCountdownInterval = null;
+  }
+  document.getElementById('shutdown-banner')?.classList.add('hidden');
+  try {
+    await fetch('/api/shutdown/cancel', { method: 'POST' });
+    showToast('🛑 تم إلغاء إيقاف تشغيل الكمبيوتر بنجاح!', 'info');
+  } catch (e) {
+    console.error(e);
   }
 }
 

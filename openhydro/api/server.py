@@ -8,10 +8,10 @@ import shutil
 import asyncio
 from contextlib import asynccontextmanager
 from typing import Optional, Dict, Any, List
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from openhydro.core import DownloadEngine, TaskStatus
@@ -292,6 +292,119 @@ def create_app(engine: DownloadEngine) -> FastAPI:
             return {"status": "success", "folder": folder}
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
+
+    @app.get("/api/tasks/{task_id}/preview_stream")
+    async def preview_stream(task_id: str, request: Request):
+        import mimetypes
+        from fastapi.responses import StreamingResponse
+        task = engine.tasks.get(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="المهمة غير موجودة")
+
+        file_path = task.save_path if os.path.exists(task.save_path) else StorageManager.get_part_path(task.save_path)
+        if not os.path.exists(file_path):
+            raise HTTPException(status_code=404, detail="ملف التحميل لم يبدأ بعد")
+
+        # Determine readable boundary from first chunk
+        chunk_0 = next((c for c in task.chunks if c.start_byte == 0), None)
+        if not chunk_0 or chunk_0.current_byte < 128 * 1024:
+            if task.status != TaskStatus.COMPLETED and not os.path.exists(task.save_path):
+                raise HTTPException(status_code=400, detail="يرجى الانتظار حتى يتم تحميل أول 128 كيلوبايت لبدء المعاينة")
+
+        max_readable = chunk_0.current_byte if (task.status != TaskStatus.COMPLETED and not os.path.exists(task.save_path)) else os.path.getsize(file_path)
+        if max_readable <= 0:
+            raise HTTPException(status_code=400, detail="لا توجد بيانات متاحة للمعاينة بعد")
+
+        content_type, _ = mimetypes.guess_type(task.filename)
+        content_type = content_type or "video/mp4"
+
+        range_header = request.headers.get("range")
+        if range_header:
+            parts = range_header.replace("bytes=", "").split("-")
+            start = int(parts[0]) if parts[0] else 0
+            end = int(parts[1]) if len(parts) > 1 and parts[1] else min(start + 4 * 1024 * 1024 - 1, max_readable - 1)
+            end = min(end, max_readable - 1)
+            length = max(0, end - start + 1)
+
+            def iter_range():
+                with open(file_path, "rb") as f:
+                    f.seek(start)
+                    rem = length
+                    while rem > 0:
+                        chunk_size = min(64 * 1024, rem)
+                        data = f.read(chunk_size)
+                        if not data:
+                            break
+                        rem -= len(data)
+                        yield data
+
+            headers = {
+                "Content-Range": f"bytes {start}-{end}/{max_readable}",
+                "Accept-Ranges": "bytes",
+                "Content-Length": str(length),
+                "Content-Type": content_type,
+            }
+            return StreamingResponse(iter_range(), status_code=206, headers=headers)
+        else:
+            def iter_full():
+                with open(file_path, "rb") as f:
+                    read_total = 0
+                    while read_total < max_readable:
+                        to_read = min(64 * 1024, max_readable - read_total)
+                        data = f.read(to_read)
+                        if not data:
+                            break
+                        read_total += len(data)
+                        yield data
+
+            headers = {
+                "Accept-Ranges": "bytes",
+                "Content-Length": str(max_readable),
+                "Content-Type": content_type,
+            }
+            return StreamingResponse(iter_full(), headers=headers)
+
+    @app.post("/api/tasks/{task_id}/preview_external")
+    async def preview_external(task_id: str):
+        import subprocess
+        task = engine.tasks.get(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="المهمة غير موجودة")
+        
+        file_path = task.save_path if os.path.exists(task.save_path) else StorageManager.get_part_path(task.save_path)
+        if not os.path.exists(file_path):
+            raise HTTPException(status_code=404, detail="ملف التحميل غير موجود بعد")
+
+        try:
+            if sys.platform == "win32":
+                os.startfile(file_path)
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", file_path])
+            else:
+                subprocess.Popen(["xdg-open", file_path])
+            return {"status": "success", "path": file_path}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post("/api/tasks/{task_id}/extract")
+    async def extract_task_archive(task_id: str):
+        task = engine.tasks.get(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="المهمة غير موجودة")
+        if not os.path.exists(task.save_path):
+            raise HTTPException(status_code=404, detail="الملف غير موجود على القرص")
+
+        try:
+            target_dir = StorageManager.extract_archive(task.save_path)
+            return {"status": "success", "extracted_to": target_dir}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post("/api/shutdown/cancel")
+    async def cancel_shutdown():
+        ok = DownloadEngine.cancel_system_shutdown()
+        engine.scheduler.set_auto_shutdown(False)
+        return {"status": "cancelled" if ok else "failed"}
 
     @app.post("/api/settings/limiter")
     async def set_limiter(req: SpeedLimitRequest):

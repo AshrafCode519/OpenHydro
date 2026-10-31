@@ -49,6 +49,36 @@ class StorageManager:
         return target_path + ".hydro.part"
 
     @classmethod
+    def extract_archive(cls, archive_path: str, extract_dir: Optional[str] = None) -> str:
+        """
+        Safely extracts ZIP, TAR, TGZ compressed archives into a dedicated destination folder.
+        """
+        import zipfile
+        import tarfile
+
+        if not os.path.exists(archive_path):
+            raise FileNotFoundError(f"Archive not found: {archive_path}")
+
+        base_name, _ = os.path.splitext(os.path.basename(archive_path))
+        if base_name.endswith(".tar"):
+            base_name, _ = os.path.splitext(base_name)
+
+        if not extract_dir:
+            extract_dir = os.path.join(os.path.dirname(archive_path), base_name)
+        os.makedirs(extract_dir, exist_ok=True)
+
+        if zipfile.is_zipfile(archive_path):
+            with zipfile.ZipFile(archive_path, 'r') as zf:
+                zf.extractall(extract_dir)
+            return extract_dir
+        elif tarfile.is_tarfile(archive_path):
+            with tarfile.open(archive_path, 'r:*') as tf:
+                tf.extractall(extract_dir)
+            return extract_dir
+        else:
+            raise ValueError("صيغة الأرشيف غير مدعومة حالياً (يدعم .zip و .tar و .tar.gz)")
+
+    @classmethod
     def preallocate_file(cls, filepath: str, total_bytes: int):
         """
         Pre-allocates the file on disk to guarantee continuous space and avoid fragmentation.

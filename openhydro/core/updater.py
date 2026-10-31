@@ -162,9 +162,10 @@ class UpdateChecker:
             }
 
     @staticmethod
-    def launch_installer(file_path: str) -> bool:
+    def launch_installer(file_path: str, silent: bool = False) -> bool:
         """
         Launches the downloaded installer or opens the folder containing the update.
+        Supports silent background updates via /VERYSILENT.
         """
         if not file_path or not os.path.exists(file_path):
             return False
@@ -172,9 +173,12 @@ class UpdateChecker:
         try:
             if sys.platform.startswith("win"):
                 if file_path.lower().endswith(".exe"):
+                    args = [file_path]
+                    if silent:
+                        args.extend(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS"])
                     # Launch installer detached so OpenHydro can be closed safely
                     subprocess.Popen(
-                        [file_path],
+                        args,
                         creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS,
                         close_fds=True,
                     )

@@ -133,6 +133,16 @@ class TestStorageManager(unittest.TestCase):
         self.assertEqual(len(tasks), 1)
         self.assertEqual(tasks[0].filename, "clip.mp4")
 
+    def test_extract_archive(self):
+        import zipfile
+        zip_path = os.path.join(self.test_dir, "test_pkg.zip")
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("hello.txt", "Hello OpenHydro")
+
+        extracted_dir = StorageManager.extract_archive(zip_path)
+        self.assertTrue(os.path.exists(extracted_dir))
+        self.assertTrue(os.path.exists(os.path.join(extracted_dir, "hello.txt")))
+
 
 class TestTaskModel(unittest.TestCase):
     def test_category_determination(self):

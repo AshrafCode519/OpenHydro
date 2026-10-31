@@ -47,13 +47,13 @@
         curr = curr.parentElement;
         if (!curr) break;
 
-        const videoLink = curr.querySelector('a[href*="/videos/"], a[href*="/watch"], a[href*="/reel/"]');
+        const videoLink = curr.querySelector('a[href*="/videos/"], a[href*="/watch"], a[href*="/reel/"], a[href*="/share/v/"], a[href*="/share/r/"]');
         if (videoLink && videoLink.href) {
           return videoLink.href;
         }
 
         if (curr.getAttribute("role") === "article" || curr.dataset.pagelet) {
-          const anyPostLink = curr.querySelector('a[href*="/posts/"], a[href*="/permalink/"]');
+          const anyPostLink = curr.querySelector('a[href*="/posts/"], a[href*="/permalink/"], a[href*="fbid="]');
           if (anyPostLink && anyPostLink.href) {
             return anyPostLink.href;
           }
@@ -149,16 +149,99 @@
     const wrapper = document.createElement("div");
     wrapper.className = "openhydro-wrapper";
 
+    // Detect platform for default positioning
+    const isFacebook = window.location.hostname.includes("facebook.com") || window.location.hostname.includes("fb.watch");
+    const savedPos = localStorage.getItem("openhydro_btn_pos");
+    if (savedPos) {
+      try {
+        const parsed = JSON.parse(savedPos);
+        if (parsed.top !== undefined && parsed.left !== undefined) {
+          wrapper.style.top = parsed.top;
+          wrapper.style.left = parsed.left;
+        }
+      } catch (e) {}
+    } else if (isFacebook) {
+      // Default safely below Facebook's top header controls (author name, volume, pause)
+      wrapper.style.top = "54px";
+      wrapper.style.left = "14px";
+    }
+
     // Create Floating Button
     const btn = document.createElement("div");
     btn.className = "openhydro-grab-btn";
-    btn.title = "تحميل هذا الفيديو / استخراج الصوت / تنزيل النصوص";
+    btn.title = "تحميل هذا الفيديو / استخراج الصوت / تنزيل النصوص (انقر للفتح، اسحب من ⠿ للتحريك)";
     btn.innerHTML = `
+      <div class="openhydro-drag-handle" title="اسحب لتحريك الزر لأي مكان">⠿</div>
       <div class="openhydro-grab-icon">⚡</div>
-      <span class="openhydro-grab-text">تحميل هذا الفيديو</span>
-      <span class="openhydro-grab-tag">دقة | صوت | نص</span>
+      <span class="openhydro-grab-text">تحميل الفيديو</span>
       <span class="openhydro-grab-arrow">▼</span>
+      <button class="openhydro-btn-min" title="تصغير الزر">−</button>
     `;
+
+    // Drag and Drop Logic
+    let isDragging = false;
+    let dragStartX = 0;
+    let dragStartY = 0;
+    let wrapperStartX = 0;
+    let wrapperStartY = 0;
+    let hasMoved = false;
+
+    const dragHandle = btn.querySelector(".openhydro-drag-handle");
+    dragHandle.addEventListener("mousedown", (e) => {
+      if (e.button !== 0) return;
+      isDragging = true;
+      hasMoved = false;
+      dragStartX = e.clientX;
+      dragStartY = e.clientY;
+      const rect = wrapper.getBoundingClientRect();
+      const parentRect = container.getBoundingClientRect();
+      wrapperStartX = rect.left - parentRect.left;
+      wrapperStartY = rect.top - parentRect.top;
+      e.preventDefault();
+      e.stopPropagation();
+    });
+
+    document.addEventListener("mousemove", (e) => {
+      if (!isDragging) return;
+      const dx = e.clientX - dragStartX;
+      const dy = e.clientY - dragStartY;
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+        hasMoved = true;
+      }
+      if (hasMoved) {
+        let newX = wrapperStartX + dx;
+        let newY = wrapperStartY + dy;
+        const cWidth = container.clientWidth || 300;
+        const cHeight = container.clientHeight || 200;
+        newX = Math.max(4, Math.min(newX, cWidth - wrapper.offsetWidth - 4));
+        newY = Math.max(4, Math.min(newY, cHeight - wrapper.offsetHeight - 4));
+
+        wrapper.style.left = `${newX}px`;
+        wrapper.style.top = `${newY}px`;
+      }
+    });
+
+    document.addEventListener("mouseup", () => {
+      if (isDragging) {
+        isDragging = false;
+        if (hasMoved) {
+          try {
+            localStorage.setItem("openhydro_btn_pos", JSON.stringify({
+              top: wrapper.style.top,
+              left: wrapper.style.left
+            }));
+          } catch (e) {}
+        }
+      }
+    });
+
+    // Minimize / Expand handler
+    const minBtn = btn.querySelector(".openhydro-btn-min");
+    minBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      closeMenu();
+      wrapper.classList.toggle("openhydro-collapsed");
+    });
 
     let menu = null;
     let hideTimer = null;
@@ -177,6 +260,16 @@
 
       menu = document.createElement("div");
       menu.className = "openhydro-quality-menu";
+
+      // Smart flip: if near bottom of viewport, open upwards
+      const rect = wrapper.getBoundingClientRect();
+      if (window.innerHeight - rect.bottom < 340 && rect.top > 320) {
+        menu.style.top = "auto";
+        menu.style.bottom = "calc(100% + 8px)";
+      } else {
+        menu.style.top = "calc(100% + 8px)";
+        menu.style.bottom = "auto";
+      }
 
       const mediaUrl = getMediaUrl(video);
       renderMenuContents(mediaUrl, cachedQualities);
@@ -380,19 +473,23 @@
       });
     }
 
-    // Toggle menu on button click
+    // Toggle menu on button click (Click-only, no annoying hover hijacking!)
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
+      if (hasMoved) {
+        hasMoved = false;
+        return;
+      }
+      if (wrapper.classList.contains("openhydro-collapsed")) {
+        wrapper.classList.remove("openhydro-collapsed");
+        return;
+      }
       if (isMenuOpen) {
         closeMenu();
       } else {
         openMenu();
       }
     });
-
-    // Show menu on button hover (with delay on mouseleave)
-    btn.addEventListener("mouseenter", openMenu);
-    btn.addEventListener("mouseleave", scheduleClose);
 
     wrapper.appendChild(btn);
     container.appendChild(wrapper);

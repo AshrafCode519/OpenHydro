@@ -19,27 +19,94 @@
 .openhydro-grab-btn {
   display: inline-flex !important;
   align-items: center !important;
-  gap: 8px !important;
-  padding: 6px 14px !important;
+  gap: 6px !important;
+  padding: 5px 10px !important;
   background: rgba(11, 15, 25, 0.94) !important;
   backdrop-filter: blur(14px) !important;
   -webkit-backdrop-filter: blur(14px) !important;
   border: 1.5px solid rgba(6, 182, 212, 0.55) !important;
-  border-radius: 22px !important;
+  border-radius: 20px !important;
   color: #f3f4f6 !important;
-  font-size: 12px !important;
+  font-size: 11.5px !important;
   font-weight: 600 !important;
   cursor: pointer !important;
-  box-shadow: 0 4px 22px rgba(0, 0, 0, 0.65), 0 0 14px rgba(6, 182, 212, 0.35) !important;
-  transition: all 0.22s cubic-bezier(0.4, 0, 0.2, 1) !important;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.65), 0 0 10px rgba(6, 182, 212, 0.35) !important;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
+  user-select: none !important;
 }
 
 .openhydro-grab-btn:hover,
 .openhydro-grab-btn.openhydro-active {
   background: rgba(15, 23, 42, 0.98) !important;
   border-color: #06b6d4 !important;
-  box-shadow: 0 6px 26px rgba(0, 0, 0, 0.75), 0 0 20px rgba(6, 182, 212, 0.65) !important;
-  transform: translateY(-2px) !important;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.75), 0 0 16px rgba(6, 182, 212, 0.5) !important;
+  transform: translateY(-1px) !important;
+}
+
+.openhydro-drag-handle {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  cursor: grab !important;
+  color: #64748b !important;
+  font-size: 13px !important;
+  padding: 0 1px !important;
+  user-select: none !important;
+  transition: color 0.15s ease !important;
+}
+
+.openhydro-drag-handle:hover {
+  color: #38bdf8 !important;
+}
+
+.openhydro-drag-handle:active {
+  cursor: grabbing !important;
+}
+
+.openhydro-btn-min {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 15px !important;
+  height: 15px !important;
+  border-radius: 50% !important;
+  background: rgba(255, 255, 255, 0.08) !important;
+  color: #94a3b8 !important;
+  font-size: 10px !important;
+  line-height: 1 !important;
+  border: none !important;
+  cursor: pointer !important;
+  transition: all 0.15s ease !important;
+  padding: 0 !important;
+  margin-right: 2px !important;
+}
+
+.openhydro-btn-min:hover {
+  background: rgba(239, 68, 68, 0.45) !important;
+  color: #ffffff !important;
+}
+
+/* Collapsed discreet badge */
+.openhydro-wrapper.openhydro-collapsed .openhydro-drag-handle,
+.openhydro-wrapper.openhydro-collapsed .openhydro-grab-text,
+.openhydro-wrapper.openhydro-collapsed .openhydro-grab-tag,
+.openhydro-wrapper.openhydro-collapsed .openhydro-grab-arrow,
+.openhydro-wrapper.openhydro-collapsed .openhydro-btn-min {
+  display: none !important;
+}
+
+.openhydro-wrapper.openhydro-collapsed .openhydro-grab-btn {
+  padding: 4px !important;
+  border-radius: 50% !important;
+  width: 26px !important;
+  height: 26px !important;
+  justify-content: center !important;
+  opacity: 0.8 !important;
+}
+
+.openhydro-wrapper.openhydro-collapsed .openhydro-grab-btn:hover {
+  opacity: 1 !important;
+  transform: scale(1.1) !important;
 }
 
 .openhydro-grab-icon {

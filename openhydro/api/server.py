@@ -397,10 +397,11 @@ def create_app(engine: DownloadEngine) -> FastAPI:
             ]
             ext_dir = next((c for c in candidates if os.path.exists(c)), candidates[0])
 
+        import openhydro
         return {
             "path": ext_dir,
             "exists": os.path.exists(ext_dir),
-            "version": "1.1.0"
+            "version": openhydro.__version__
         }
 
     @app.post("/api/extension/open_folder")

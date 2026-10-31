@@ -217,6 +217,26 @@ class DownloadEngine:
             base, _ = os.path.splitext(raw_name)
             raw_name = f"{base}.txt"
 
+        is_gdrive = info.get("is_gdrive", False)
+        is_extractor = info.get("is_video_platform", False) and not is_gdrive
+        is_hls = info.get("is_hls", False)
+
+        # Determine category early for proper folder routing
+        if format_id in ("audio_mp3", "audio_m4a"):
+            category = "audio"
+        elif format_id in ("subtitle_srt", "subtitle_txt"):
+            category = "document"
+        elif is_hls or is_extractor:
+            category = "video"
+        else:
+            category = DownloadTask.determine_category_for_filename(raw_name)
+
+        # Automatically route to category subfolder if save_dir was not explicitly set or is default download_dir
+        if not save_dir or os.path.abspath(save_dir) == os.path.abspath(self.download_dir):
+            save_dir = StorageManager.get_category_dir(self.download_dir, category)
+        else:
+            os.makedirs(save_dir, exist_ok=True)
+
         final_filename = raw_name
         target_path = os.path.join(save_dir, final_filename)
 
@@ -230,8 +250,6 @@ class DownloadEngine:
         final_filename = os.path.basename(target_path)
 
         target_url = info.get("resolved_url") or url
-        is_gdrive = info.get("is_gdrive", False)
-        is_extractor = info.get("is_video_platform", False) and not is_gdrive
         supports_ranges = True if (is_extractor or is_gdrive) else info.get("supports_ranges", False)
         conns = num_connections if supports_ranges else 1
         if (is_extractor or is_gdrive) and conns < 8:
@@ -246,19 +264,12 @@ class DownloadEngine:
             num_connections=conns,
             custom_headers=custom_headers or {},
             referrer=referrer,
-            is_hls=info.get("is_hls", False),
+            is_hls=is_hls,
             hls_info=info.get("hls_info"),
             is_extractor=is_extractor,
             selected_format=format_id,
         )
-        if format_id in ("audio_mp3", "audio_m4a"):
-            task.category = "audio"
-        elif format_id in ("subtitle_srt", "subtitle_txt"):
-            task.category = "document"
-        elif task.is_hls or is_extractor:
-            task.category = "video"
-        else:
-            task.category = task.determine_category()
+        task.category = category
 
         # Initialize chunks
         if task.supports_ranges and task.total_bytes > 0:

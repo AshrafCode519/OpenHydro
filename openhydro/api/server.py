@@ -141,7 +141,10 @@ def create_app(engine: DownloadEngine) -> FastAPI:
     async def download_playlist_endpoint(req: PlaylistDownloadRequest):
         import re
         sanitized_title = re.sub(r'[\\/*?:"<>|]', "_", req.playlist_title).strip() or "Playlist"
-        target_dir = os.path.join(engine.download_dir, sanitized_title)
+        # Determine playlist category: audio if audio format, else video
+        playlist_cat = "audio" if req.format_id in ("audio_mp3", "audio_m4a") else "video"
+        base_cat_dir = StorageManager.get_category_dir(engine.download_dir, playlist_cat)
+        target_dir = os.path.join(base_cat_dir, sanitized_title)
         os.makedirs(target_dir, exist_ok=True)
 
         added_tasks = []
@@ -248,6 +251,48 @@ def create_app(engine: DownloadEngine) -> FastAPI:
                 del engine.tasks[task_id]
         return {"status": "deleted"}
 
+    @app.post("/api/tasks/{task_id}/open_file")
+    async def open_task_file(task_id: str):
+        import subprocess
+        task = engine.tasks.get(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="المهمة غير موجودة")
+        if not os.path.exists(task.save_path):
+            raise HTTPException(status_code=404, detail="الملف غير موجود على القرص")
+        try:
+            if sys.platform == "win32":
+                os.startfile(task.save_path)
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", task.save_path])
+            else:
+                subprocess.Popen(["xdg-open", task.save_path])
+            return {"status": "success", "path": task.save_path}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post("/api/tasks/{task_id}/open_folder")
+    async def open_task_folder(task_id: str):
+        import subprocess
+        task = engine.tasks.get(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="المهمة غير موجودة")
+        folder = os.path.dirname(task.save_path)
+        if not os.path.exists(folder):
+            raise HTTPException(status_code=404, detail="المجلد غير موجود على القرص")
+        try:
+            if sys.platform == "win32":
+                if os.path.exists(task.save_path):
+                    subprocess.Popen(f'explorer /select,"{os.path.abspath(task.save_path)}"')
+                else:
+                    os.startfile(folder)
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", "-R", task.save_path] if os.path.exists(task.save_path) else ["open", folder])
+            else:
+                subprocess.Popen(["xdg-open", folder])
+            return {"status": "success", "folder": folder}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
     @app.post("/api/settings/limiter")
     async def set_limiter(req: SpeedLimitRequest):
         bytes_per_sec = req.max_kbps * 1024
@@ -331,15 +376,26 @@ def create_app(engine: DownloadEngine) -> FastAPI:
         import subprocess
         if getattr(sys, "frozen", False):
             base_dir = getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
+            exe_dir = os.path.dirname(sys.executable)
             candidates = [
-                os.path.join(os.path.dirname(sys.executable), "openhydro", "extension"),
-                os.path.join(os.path.dirname(sys.executable), "_internal", "openhydro", "extension"),
+                os.path.join(exe_dir, "extension"),
+                os.path.join(exe_dir, "openhydro", "extension"),
+                os.path.join(exe_dir, "_internal", "extension"),
+                os.path.join(exe_dir, "_internal", "openhydro", "extension"),
+                os.path.join(base_dir, "extension"),
                 os.path.join(base_dir, "openhydro", "extension"),
+                os.path.join(base_dir, "_internal", "extension"),
                 os.path.join(base_dir, "_internal", "openhydro", "extension"),
             ]
             ext_dir = next((c for c in candidates if os.path.exists(c)), candidates[0])
         else:
-            ext_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "extension"))
+            candidates = [
+                os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "extension")),
+                os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "openhydro", "extension")),
+                os.path.abspath(os.path.join(os.getcwd(), "openhydro", "extension")),
+                os.path.abspath(os.path.join(os.getcwd(), "extension")),
+            ]
+            ext_dir = next((c for c in candidates if os.path.exists(c)), candidates[0])
 
         return {
             "path": ext_dir,
@@ -352,7 +408,10 @@ def create_app(engine: DownloadEngine) -> FastAPI:
         import subprocess
         info = await get_extension_info()
         ext_dir = info["path"]
-        if os.path.exists(ext_dir):
+        if not os.path.exists(ext_dir):
+            os.makedirs(ext_dir, exist_ok=True)
+            
+        try:
             if sys.platform == "win32":
                 os.startfile(ext_dir)
             elif sys.platform == "darwin":
@@ -360,7 +419,8 @@ def create_app(engine: DownloadEngine) -> FastAPI:
             else:
                 subprocess.Popen(["xdg-open", ext_dir])
             return {"status": "success", "path": ext_dir}
-        return {"status": "error", "message": "Extension directory not found"}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
 
     # Browser extension / Remote Push trigger
     @app.post("/api/remote/push")

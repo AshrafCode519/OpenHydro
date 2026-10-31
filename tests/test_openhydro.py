@@ -105,6 +105,34 @@ class TestStorageManager(unittest.TestCase):
         self.assertTrue(os.path.exists(test_file))
         self.assertEqual(os.path.getsize(test_file), 1024 * 1024)
 
+    def test_category_folders_routing(self):
+        video_dir = StorageManager.get_category_dir(self.test_dir, "video")
+        self.assertEqual(os.path.basename(video_dir), "Videos")
+        self.assertTrue(os.path.exists(video_dir))
+
+        prog_dir = StorageManager.get_category_dir(self.test_dir, "program")
+        self.assertEqual(os.path.basename(prog_dir), "Programs")
+        self.assertTrue(os.path.exists(prog_dir))
+
+        music_dir = StorageManager.get_category_dir(self.test_dir, "audio")
+        self.assertEqual(os.path.basename(music_dir), "Music")
+        self.assertTrue(os.path.exists(music_dir))
+
+    def test_recursive_meta_scanning(self):
+        video_dir = StorageManager.get_category_dir(self.test_dir, "video")
+        sub_task = DownloadTask(
+            url="https://example.com/clip.mp4",
+            filename="clip.mp4",
+            save_path=os.path.join(video_dir, "clip.mp4"),
+            total_bytes=1000,
+            category="video",
+        )
+        StorageManager.save_task_meta(sub_task)
+
+        tasks = StorageManager.scan_and_load_tasks(self.test_dir)
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(tasks[0].filename, "clip.mp4")
+
 
 class TestTaskModel(unittest.TestCase):
     def test_category_determination(self):

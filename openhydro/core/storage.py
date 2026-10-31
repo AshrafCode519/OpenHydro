@@ -11,6 +11,25 @@ from .task import DownloadTask, Chunk, TaskStatus
 
 
 class StorageManager:
+    CATEGORY_FOLDERS = {
+        "video": "Videos",
+        "program": "Programs",
+        "audio": "Music",
+        "compressed": "Compressed",
+        "document": "Documents",
+        "other": "",
+    }
+
+    @classmethod
+    def get_category_dir(cls, base_dir: str, category: str) -> str:
+        """Returns the specific category subfolder path inside base_dir."""
+        sub = cls.CATEGORY_FOLDERS.get(category, "")
+        if sub:
+            target = os.path.join(base_dir, sub)
+            os.makedirs(target, exist_ok=True)
+            return target
+        return base_dir
+
     @staticmethod
     def get_default_download_dir() -> str:
         # Standard user downloads folder
@@ -126,14 +145,14 @@ class StorageManager:
     @classmethod
     def scan_and_load_tasks(cls, download_dir: str) -> List[DownloadTask]:
         """
-        Scans download_dir for all .hydro.meta files and restores tasks so downloads persist.
+        Scans download_dir and category subfolders for all .hydro.meta files and restores tasks so downloads persist.
         """
         restored = []
         if not os.path.exists(download_dir):
             return restored
 
-        pattern = os.path.join(download_dir, "*.hydro.meta")
-        for meta_file in glob.glob(pattern):
+        pattern = os.path.join(download_dir, "**", "*.hydro.meta")
+        for meta_file in glob.glob(pattern, recursive=True):
             task = cls.load_task_meta(meta_file)
             if task:
                 restored.append(task)

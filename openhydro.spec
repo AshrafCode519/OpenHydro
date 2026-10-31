@@ -49,6 +49,7 @@ hidden_imports += collect_submodules('fastapi')
 datas = [
     ('openhydro/web', 'openhydro/web'),
     ('openhydro/extension', 'openhydro/extension'),
+    ('openhydro/extension', 'extension'),
     ('assets', 'assets'),
 ]
 

@@ -339,6 +339,15 @@ function renderTaskCard(task) {
 
         <!-- Action Buttons -->
         <div class="flex items-center gap-1.5 shrink-0">
+          ${isCompleted ? `
+            <button onclick="openTaskFile('${task.id}')" title="تشغيل / فتح الملف" class="p-2 rounded-xl glass-panel hover:bg-emerald-500/20 text-emerald-400 transition-colors">
+              <i data-lucide="play" class="w-4 h-4"></i>
+            </button>
+            <button onclick="openTaskFolder('${task.id}')" title="فتح المجلد في Explorer" class="p-2 rounded-xl glass-panel hover:bg-cyan-500/20 text-cyan-400 transition-colors">
+              <i data-lucide="folder-open" class="w-4 h-4"></i>
+            </button>
+          ` : ''}
+
           ${isDownloading ? `
             <button onclick="pauseTask('${task.id}')" title="إيقاف مؤقت" class="p-2 rounded-xl glass-panel hover:bg-white/10 text-amber-400 transition-colors">
               <i data-lucide="pause" class="w-4 h-4"></i>
@@ -451,6 +460,34 @@ async function resumeAllTasks() {
   Object.values(tasks).forEach(t => {
     if (t.status === 'paused') resumeTask(t.id);
   });
+}
+
+async function openTaskFile(id) {
+  try {
+    const res = await fetch(`/api/tasks/${id}/open_file`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.status === 'success') {
+      showToast('🚀 جاري تشغيل / فتح الملف...', 'info');
+      return;
+    }
+    showToast('تعذر فتح الملف: ' + (data.detail || data.message || 'الملف غير موجود'), 'warning');
+  } catch (e) {
+    showToast('حدث خطأ أثناء فتح الملف: ' + e, 'error');
+  }
+}
+
+async function openTaskFolder(id) {
+  try {
+    const res = await fetch(`/api/tasks/${id}/open_folder`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.status === 'success') {
+      showToast('📂 تم فتح مجلد التنزيل في مستكشف الملفات!', 'success');
+      return;
+    }
+    showToast('تعذر فتح المجلد: ' + (data.detail || data.message || 'المجلد غير موجود'), 'warning');
+  } catch (e) {
+    showToast('حدث خطأ أثناء فتح المجلد: ' + e, 'error');
+  }
 }
 
 // Speed Limiter
@@ -1027,15 +1064,12 @@ function closeExtensionModal() {
 async function openExtensionFolderInExplorer() {
   try {
     const res = await fetch('/api/extension/open_folder', { method: 'POST' });
-    if (res.ok) {
-      const data = await res.json();
-      if (data && data.status === 'success') {
-        showToast('📂 تم فتح مجلد الإضافة في مستكشف الملفات بنجاح!', 'success');
-        return;
-      }
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data && data.status === 'success') {
+      showToast('📂 تم فتح مجلد الإضافة في مستكشف الملفات بنجاح!', 'success');
+      return;
     }
-    const errData = await res.json().catch(() => ({}));
-    showToast('تعذر فتح المجلد تلقائياً: ' + (errData.message || errData.detail || 'يرجى فتح المجلد يدوياً'), 'warning');
+    showToast('تعذر فتح المجلد تلقائياً: ' + (data.message || data.detail || 'يرجى فتح المجلد يدوياً من مساره'), 'warning');
   } catch (e) {
     showToast('حدث خطأ أثناء فتح المجلد: ' + e, 'error');
   }

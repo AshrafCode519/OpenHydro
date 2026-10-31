@@ -108,8 +108,9 @@ class DownloadTask:
             return 0.0
         return min(100.0, (self.downloaded_bytes / self.total_bytes) * 100.0)
 
-    def determine_category(self) -> str:
-        name = self.filename.lower()
+    @classmethod
+    def determine_category_for_filename(cls, filename: str) -> str:
+        name = filename.lower()
         if any(name.endswith(ext) for ext in [".mp4", ".mkv", ".avi", ".mov", ".flv", ".webm", ".ts"]):
             return "video"
         if any(name.endswith(ext) for ext in [".mp3", ".wav", ".aac", ".flac", ".ogg", ".m4a"]):
@@ -121,6 +122,9 @@ class DownloadTask:
         if any(name.endswith(ext) for ext in [".exe", ".msi", ".apk", ".deb", ".rpm", ".dmg"]):
             return "program"
         return "other"
+
+    def determine_category(self) -> str:
+        return self.determine_category_for_filename(self.filename)
 
     def to_dict(self) -> Dict[str, Any]:
         return {

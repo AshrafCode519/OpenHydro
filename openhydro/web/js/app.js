@@ -36,6 +36,16 @@ function formatETA(seconds) {
   return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
 }
 
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 // Category Icons
 function getCategoryIcon(cat) {
   switch (cat) {
@@ -340,11 +350,11 @@ function renderTaskCard(task) {
           </div>
           <div class="min-w-0 flex-1">
             <div class="flex items-center gap-2 flex-wrap">
-              <h3 class="font-semibold text-sm text-gray-100 truncate" title="${task.filename}">${task.filename}</h3>
+              <h3 class="font-semibold text-sm text-gray-100 truncate" title="${escapeHtml(task.filename)}">${escapeHtml(task.filename)}</h3>
               ${statusBadge}
               ${torrentBadge}
             </div>
-            <p class="text-xs text-gray-400 truncate mt-0.5 font-mono">${task.url}</p>
+            <p class="text-xs text-gray-400 truncate mt-0.5 font-mono">${escapeHtml(task.url)}</p>
           </div>
         </div>
 

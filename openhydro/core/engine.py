@@ -114,6 +114,20 @@ class DownloadEngine:
         if path_name and "." in path_name:
             filename = path_name
 
+        # Check if Magnet link
+        if url.startswith("magnet:"):
+            from .torrent import TorrentManager
+            minfo = TorrentManager.parse_magnet_info(url)
+            t_name = minfo["name"] or "Torrent_Download"
+            return {
+                "filename": t_name,
+                "total_bytes": minfo.get("total_size", 0),
+                "supports_ranges": True,
+                "is_torrent": True,
+                "category": "torrent",
+                "title": t_name,
+            }
+
         # Check if URL belongs to a playlist (YouTube, SoundCloud sets, Google Drive folder, etc.)
         from .gdrive import GoogleDriveHandler
         if VideoExtractor.is_playlist_url(url) or GoogleDriveHandler.is_gdrive_folder(url) or len(GoogleDriveHandler.find_all_file_ids(url)) > 1:
@@ -746,6 +760,22 @@ class DownloadEngine:
                 await asyncio.sleep(1.0)
                 status = await self.torrent_manager.tell_status(task.torrent_gid)
                 if not status:
+                    # GID was lost from aria2c (e.g. app restarted) -> re-register download
+                    try:
+                        if task.url.startswith("magnet:"):
+                            task.torrent_gid = await self.torrent_manager.add_magnet(task.url, save_dir=target_save_dir)
+                        elif task.url.lower().endswith(".torrent") and os.path.exists(task.url):
+                            task.torrent_gid = await self.torrent_manager.add_torrent_file(task.url, save_dir=target_save_dir)
+                        StorageManager.save_task_meta(task)
+                    except Exception:
+                        pass
+                    continue
+
+                # Check for followedBy (Magnet metadata -> actual files GID)
+                followed_by = status.get("followedBy")
+                if followed_by and len(followed_by) > 0:
+                    task.torrent_gid = followed_by[0]
+                    StorageManager.save_task_meta(task)
                     continue
 
                 state = status.get("status")  # active, waiting, paused, error, complete, removed
@@ -777,6 +807,11 @@ class DownloadEngine:
                     task.eta_seconds = None
 
                 if state == "complete":
+                    if status.get("followedBy"):
+                        task.torrent_gid = status["followedBy"][0]
+                        StorageManager.save_task_meta(task)
+                        continue
+
                     task.status = TaskStatus.COMPLETED
                     task.completed_at = time.time()
                     task.speed = 0.0

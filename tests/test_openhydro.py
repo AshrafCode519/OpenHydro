@@ -295,6 +295,38 @@ segment_1.ts
             mgr = TorrentManager(td)
             self.assertTrue(mgr.is_available())
 
+    def test_storage_metadata_persistence(self):
+        from openhydro.core.storage import StorageManager
+        from openhydro.core.task import DownloadTask, TaskStatus
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            target = os.path.join(td, "test_video.mp4")
+            task = DownloadTask(
+                url="https://youtube.com/watch?v=dummy",
+                filename="test_video.mp4",
+                save_path=target,
+                is_extractor=True,
+                selected_format="audio_mp3",
+                is_torrent=False,
+            )
+            StorageManager.save_task_meta(task)
+            meta_path = StorageManager.get_meta_path(target)
+            self.assertTrue(os.path.exists(meta_path))
+
+            loaded = StorageManager.load_task_meta(meta_path)
+            self.assertIsNotNone(loaded)
+            self.assertTrue(loaded.is_extractor)
+            self.assertEqual(loaded.selected_format, "audio_mp3")
+
+    def test_probe_magnet_url(self):
+        from openhydro.core.engine import DownloadEngine
+        import asyncio
+        magnet = "magnet:?xt=urn:btih:d6b6e4e427181c4e7c7a5223cf20a2e576082e66&dn=ArchLinux&tr=udp%3A%2F%2Ftracker.archlinux.org%3A6969"
+        info = asyncio.run(DownloadEngine.probe_url(magnet))
+        self.assertEqual(info["filename"], "ArchLinux")
+        self.assertTrue(info["is_torrent"])
+        self.assertEqual(info["category"], "torrent")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -250,6 +250,7 @@
     let hideTimer = null;
     let isMenuOpen = false;
     let cachedQualities = null;
+    let lastMediaUrl = null;
 
     function openMenu() {
       if (hideTimer) {
@@ -275,6 +276,10 @@
       }
 
       const mediaUrl = getMediaUrl(video);
+      if (lastMediaUrl !== mediaUrl) {
+        cachedQualities = null;
+        lastMediaUrl = mediaUrl;
+      }
       renderMenuContents(mediaUrl, cachedQualities);
 
       wrapper.appendChild(menu);
@@ -512,14 +517,26 @@
   function scanVideos() {
     const videos = document.querySelectorAll("video");
     videos.forEach((video) => {
+      if (video.dataset.openhydroAttached) return;
       if (video.readyState >= 1 || video.currentTime > 0 || video.src || video.currentSrc) {
         attachGrabButton(video);
-      } else {
+      } else if (!video.dataset.openhydroListening) {
+        video.dataset.openhydroListening = "true";
         video.addEventListener("loadeddata", () => attachGrabButton(video), { once: true });
         video.addEventListener("play", () => attachGrabButton(video), { once: true });
       }
     });
   }
+
+  // Handle SPA transitions (YouTube, TikTok, Instagram)
+  window.addEventListener("yt-navigate-finish", () => {
+    document.querySelectorAll(".openhydro-wrapper").forEach((w) => w.remove());
+    document.querySelectorAll("video").forEach((v) => {
+      delete v.dataset.openhydroAttached;
+      delete v.dataset.openhydroListening;
+    });
+    setTimeout(scanVideos, 300);
+  });
 
   scanVideos();
 

@@ -116,6 +116,14 @@ class StorageManager:
                 "category": task.category or task.determine_category(),
                 "custom_headers": task.custom_headers,
                 "referrer": task.referrer,
+                "is_hls": getattr(task, "is_hls", False),
+                "hls_info": getattr(task, "hls_info", None),
+                "is_extractor": getattr(task, "is_extractor", False),
+                "selected_format": getattr(task, "selected_format", None),
+                "is_torrent": getattr(task, "is_torrent", False),
+                "torrent_gid": getattr(task, "torrent_gid", None),
+                "created_at": getattr(task, "created_at", None),
+                "completed_at": getattr(task, "completed_at", None),
                 "chunks": [c.to_dict() for c in task.chunks],
             }
             with open(meta_path, "w", encoding="utf-8") as f:
@@ -132,6 +140,7 @@ class StorageManager:
             return None
 
         try:
+            import time
             with open(meta_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
 
@@ -146,6 +155,14 @@ class StorageManager:
                 category=data.get("category") or "other",
                 custom_headers=data.get("custom_headers", {}),
                 referrer=data.get("referrer"),
+                is_hls=data.get("is_hls", False),
+                hls_info=data.get("hls_info"),
+                is_extractor=data.get("is_extractor", False),
+                selected_format=data.get("selected_format"),
+                is_torrent=data.get("is_torrent", False),
+                torrent_gid=data.get("torrent_gid"),
+                created_at=data.get("created_at") or time.time(),
+                completed_at=data.get("completed_at"),
             )
             task.category = task.determine_category()
 
@@ -192,10 +209,9 @@ class StorageManager:
     @classmethod
     def finalize_download(cls, task: DownloadTask):
         """
-        Renames .part file to final file and cleans up meta file.
+        Renames .part file to final file and updates persistent task metadata.
         """
         part_path = cls.get_part_path(task.save_path)
-        meta_path = cls.get_meta_path(task.save_path)
 
         if os.path.exists(part_path):
             if os.path.exists(task.save_path):
@@ -205,8 +221,6 @@ class StorageManager:
                     pass
             os.rename(part_path, task.save_path)
 
-        if os.path.exists(meta_path):
-            try:
-                os.remove(meta_path)
-            except OSError:
-                pass
+        # Update metadata to preserve completed task history across restarts
+        task.status = TaskStatus.COMPLETED
+        cls.save_task_meta(task)

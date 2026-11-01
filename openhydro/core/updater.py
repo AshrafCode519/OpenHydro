@@ -56,6 +56,13 @@ class UpdateChecker:
                 release_data = None
                 if resp.status_code == 200:
                     release_data = resp.json()
+                elif resp.status_code == 403:
+                    return {
+                        "has_update": False,
+                        "current_version": current_version,
+                        "error": "تم تجاوز حد استعلامات GitHub API المؤقت (60 طلب/ساعة). يمكنك فحص التحديثات مباشرة من صفحة GitHub.",
+                        "html_url": f"https://github.com/{REPO_OWNER}/{REPO_NAME}/releases",
+                    }
                 elif resp.status_code == 404:
                     # If /releases/latest is not published yet, check all /releases
                     all_resp = await client.get(f"{GITHUB_API_BASE}/releases", headers=headers)

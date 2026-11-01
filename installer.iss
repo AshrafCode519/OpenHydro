@@ -2,7 +2,7 @@
 ; Generates a professional Windows Setup Installer just like IDM
 
 #define MyAppName "OpenHydro"
-#define MyAppVersion "1.2.1"
+#define MyAppVersion "1.2.2"
 #define MyAppPublisher "OpenHydro Open Source Team"
 #define MyAppURL "https://github.com/AshrafCode519/OpenHydro"
 #define MyAppExeName "OpenHydro.exe"

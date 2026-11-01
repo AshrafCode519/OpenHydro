@@ -347,10 +347,11 @@ class VideoExtractor:
 
         ffmpeg_bin = HLSDownloader.find_ffmpeg()
 
-        # Fallback safety: ensure format_selector always ends with /bestvideo+bestaudio/best
+        # Fallback safety: ensure video format_selector always has fallback
+        special_formats = ("audio_mp3", "audio_m4a", "subtitle_srt", "subtitle_txt")
         if not format_selector:
             format_selector = "bestvideo+bestaudio/best"
-        elif not (format_selector.endswith("/best") or format_selector.endswith("/b")):
+        elif format_selector not in special_formats and not (format_selector.endswith("/best") or format_selector.endswith("/b")):
             format_selector = f"{format_selector}/bestvideo+bestaudio/best"
 
         def progress_hook(d):

@@ -305,13 +305,19 @@ def create_app(engine: DownloadEngine) -> FastAPI:
         if not os.path.exists(file_path):
             raise HTTPException(status_code=404, detail="ملف التحميل لم يبدأ بعد")
 
-        # Determine readable boundary from first chunk
-        chunk_0 = next((c for c in task.chunks if c.start_byte == 0), None)
-        if not chunk_0 or chunk_0.current_byte < 128 * 1024:
-            if task.status != TaskStatus.COMPLETED and not os.path.exists(task.save_path):
-                raise HTTPException(status_code=400, detail="يرجى الانتظار حتى يتم تحميل أول 128 كيلوبايت لبدء المعاينة")
+        # Determine readable boundary
+        if getattr(task, "is_extractor", False) or getattr(task, "is_hls", False):
+            actual_sz = os.path.getsize(file_path)
+            if actual_sz < 64 * 1024 and task.status != TaskStatus.COMPLETED:
+                raise HTTPException(status_code=400, detail="يرجى الانتظار بضع ثوانٍ حتى يتم تنزيل أول مقطع لبدء المعاينة")
+            max_readable = actual_sz
+        else:
+            chunk_0 = next((c for c in task.chunks if c.start_byte == 0), None)
+            if not chunk_0 or chunk_0.current_byte < 128 * 1024:
+                if task.status != TaskStatus.COMPLETED and not os.path.exists(task.save_path):
+                    raise HTTPException(status_code=400, detail="يرجى الانتظار حتى يتم تحميل أول 128 كيلوبايت لبدء المعاينة")
 
-        max_readable = chunk_0.current_byte if (task.status != TaskStatus.COMPLETED and not os.path.exists(task.save_path)) else os.path.getsize(file_path)
+            max_readable = chunk_0.current_byte if (task.status != TaskStatus.COMPLETED and not os.path.exists(task.save_path)) else os.path.getsize(file_path)
         if max_readable <= 0:
             raise HTTPException(status_code=400, detail="لا توجد بيانات متاحة للمعاينة بعد")
 
@@ -507,6 +513,14 @@ def create_app(engine: DownloadEngine) -> FastAPI:
             raise HTTPException(status_code=404, detail="ملف التحديث غير موجود على القرص")
 
         success = UpdateChecker.launch_installer(target_path)
+        if success:
+            async def delayed_exit_for_update():
+                await asyncio.sleep(1.2)
+                if hasattr(engine, "torrent_manager") and engine.torrent_manager:
+                    engine.torrent_manager.stop()
+                os._exit(0)
+            asyncio.create_task(delayed_exit_for_update())
+
         return {"status": "success" if success else "failed", "path": target_path}
 
     @app.get("/api/extension/info")

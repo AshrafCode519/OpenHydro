@@ -51,13 +51,19 @@ from openhydro.core import DownloadEngine, TaskStatus, StorageManager, SystemTra
 from openhydro.api import create_app
 
 PORT = 8765
-HOST = "127.0.0.1"
+SERVER_BIND_HOST = "0.0.0.0"
+LOCAL_URL = f"http://127.0.0.1:{PORT}"
 
 
 def cleanup(engine: DownloadEngine, tray: SystemTrayManager = None):
     print("\n[OpenHydro] Saving states and shutting down gracefully...")
     if tray:
         tray.stop()
+    if hasattr(engine, "torrent_manager") and engine.torrent_manager:
+        try:
+            engine.torrent_manager.stop()
+        except Exception:
+            pass
     for task in list(engine.tasks.values()):
         if task.status == TaskStatus.DOWNLOADING:
             task.status = TaskStatus.PAUSED
@@ -83,7 +89,7 @@ def start_server(engine: DownloadEngine):
         app = create_app(engine)
         config = uvicorn.Config(
             app,
-            host=HOST,
+            host=SERVER_BIND_HOST,
             port=PORT,
             log_level="warning",
             access_log=False,
@@ -114,11 +120,11 @@ def main():
     print("=" * 60)
     print("[OpenHydro] Modern Dynamic Download Manager")
     print("[OpenHydro] Dynamic Segmentation Engine: Active")
-    print(f"[OpenHydro] Server running at: http://{HOST}:{PORT}")
+    print(f"[OpenHydro] Server listening on: {SERVER_BIND_HOST}:{PORT} (Local: {LOCAL_URL})")
     print("=" * 60)
 
     engine = DownloadEngine()
-    url = f"http://{HOST}:{PORT}"
+    url = LOCAL_URL
 
     # State tracking for close-to-tray and clean exit
     should_really_quit = False

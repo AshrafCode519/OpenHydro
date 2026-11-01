@@ -212,7 +212,8 @@ class HLSDownloader:
 
         # If ffmpeg is available and target extension is .mp4, remux cleanly without re-encoding
         if ffmpeg_exe and final_path.lower().endswith(".mp4"):
-            concat_list_path = os.path.join(os.path.dirname(final_path), "concat_list.txt")
+            import uuid
+            concat_list_path = os.path.join(os.path.dirname(final_path), f"concat_list_{uuid.uuid4().hex[:8]}.txt")
             try:
                 with open(concat_list_path, "w", encoding="utf-8") as f:
                     for seg in segment_files:

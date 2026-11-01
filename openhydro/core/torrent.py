@@ -8,6 +8,7 @@ import os
 import sys
 import time
 import base64
+import atexit
 import asyncio
 import subprocess
 from typing import Dict, Optional, List, Any
@@ -24,6 +25,7 @@ class TorrentManager:
         self._http_client: Optional[httpx.AsyncClient] = None
         self._lock = asyncio.Lock()
         self.binary_path = self._locate_binary()
+        atexit.register(self.stop)
 
     def _locate_binary(self) -> Optional[str]:
         """Finds aria2c executable in project bundle or system path."""

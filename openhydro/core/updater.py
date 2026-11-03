@@ -13,6 +13,8 @@ from typing import Dict, Optional, Tuple
 from urllib.parse import urlparse, unquote
 import httpx
 
+from .worker import shared_ssl_context_async
+
 REPO_OWNER = "AshrafCode519"
 REPO_NAME = "OpenHydro"
 GITHUB_API_BASE = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}"
@@ -66,7 +68,7 @@ class UpdateChecker:
 
         timeout = httpx.Timeout(10.0, connect=5.0)
         try:
-            async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+            async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, verify=await shared_ssl_context_async()) as client:
                 # 1. Try /releases/latest first
                 resp = await client.get(f"{GITHUB_API_BASE}/releases/latest", headers=headers)
                 

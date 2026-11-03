@@ -15,7 +15,7 @@ from typing import List, Dict, Optional, Tuple
 import httpx
 
 from .limiter import RateLimiter
-from .worker import DEFAULT_USER_AGENT, shared_ssl_context
+from .worker import DEFAULT_USER_AGENT, shared_ssl_context_async
 
 
 class HLSStreamParser:
@@ -36,7 +36,7 @@ class HLSStreamParser:
             **(headers or {}),
         }
 
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True, verify=shared_ssl_context()) as client:
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True, verify=await shared_ssl_context_async()) as client:
             resp = await client.get(url, headers=req_headers)
             if resp.status_code != 200:
                 raise ValueError(f"HTTP {resp.status_code} fetching playlist")
@@ -162,7 +162,7 @@ class HLSDownloader:
         limits = httpx.Limits(max_connections=num_connections, max_keepalive_connections=num_connections)
         # One pooled client for every segment (same headers/Referer the playlist needed)
         async with httpx.AsyncClient(
-            timeout=timeout, follow_redirects=True, headers=headers, limits=limits, verify=shared_ssl_context()
+            timeout=timeout, follow_redirects=True, headers=headers, limits=limits, verify=await shared_ssl_context_async()
         ) as client:
 
             async def worker(idx: int, seg_info: Dict):

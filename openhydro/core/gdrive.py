@@ -4,6 +4,8 @@ import urllib.parse
 from typing import Dict, List, Optional, Tuple
 import httpx
 
+from .worker import shared_ssl_context_async
+
 DEFAULT_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -97,7 +99,7 @@ class GoogleDriveHandler:
             "Accept-Language": "en-US,en;q=0.9,ar;q=0.8",
         }
 
-        async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=20.0, follow_redirects=True, verify=await shared_ssl_context_async()) as client:
             resp = await client.get(embedded_url, headers=headers)
             html = resp.text
 
@@ -203,7 +205,7 @@ class GoogleDriveHandler:
         final_url = start_url
 
         timeout = httpx.Timeout(25.0, connect=10.0)
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, verify=await shared_ssl_context_async()) as client:
             # Streamed: only the small HTML warning page is read; a direct file response is
             # closed unread instead of downloading the whole file into memory just to probe it
             async with client.stream("GET", start_url, headers=headers) as resp:

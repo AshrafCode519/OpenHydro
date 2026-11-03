@@ -6,8 +6,18 @@ Pre-allocation, file space management, resumption state persistence, and auto-di
 import json
 import os
 import glob
-from typing import Optional, Dict, Any, List
+import time
+import sqlite3
+import threading
+from typing import Optional, Dict, Any, List, Tuple
 from .task import DownloadTask, Chunk, TaskStatus
+
+# Saved states that survive a restart as-is; anything else (downloading, queued...) was interrupted
+RESTORED_AS_IS = {
+    TaskStatus.COMPLETED.value: TaskStatus.COMPLETED,
+    TaskStatus.ERROR.value: TaskStatus.ERROR,
+    TaskStatus.CANCELLED.value: TaskStatus.CANCELLED,
+}
 
 
 class StorageManager:
@@ -95,121 +105,127 @@ class StorageManager:
                 f.truncate(total_bytes)
                 f.flush()
 
+    @staticmethod
+    def task_to_record(task: DownloadTask) -> Dict[str, Any]:
+        """Serializable snapshot of everything needed to restore and resume a task."""
+        return {
+            "id": task.id,
+            "url": task.url,
+            "filename": task.filename,
+            "save_path": task.save_path,
+            "total_bytes": task.total_bytes,
+            "supports_ranges": task.supports_ranges,
+            "num_connections": task.num_connections,
+            "status": task.status.value,
+            "category": task.category or task.determine_category(),
+            "custom_headers": task.custom_headers,
+            "referrer": task.referrer,
+            "is_hls": task.is_hls,
+            "hls_info": task.hls_info,
+            "is_extractor": task.is_extractor,
+            "selected_format": task.selected_format,
+            "is_torrent": task.is_torrent,
+            "torrent_gid": task.torrent_gid,
+            "created_at": task.created_at,
+            "completed_at": task.completed_at,
+            "error_message": task.error_message,
+            "chunks": [c.to_dict() for c in task.chunks],
+        }
+
+    @classmethod
+    def task_from_record(cls, data: Dict[str, Any]) -> DownloadTask:
+        task = DownloadTask(
+            url=data["url"],
+            filename=data["filename"],
+            save_path=data["save_path"],
+            id=data["id"],
+            total_bytes=data.get("total_bytes", 0),
+            supports_ranges=data.get("supports_ranges", False),
+            num_connections=data.get("num_connections", 8),
+            custom_headers=data.get("custom_headers", {}),
+            referrer=data.get("referrer"),
+            is_hls=data.get("is_hls", False),
+            hls_info=data.get("hls_info"),
+            is_extractor=data.get("is_extractor", False),
+            selected_format=data.get("selected_format"),
+            is_torrent=data.get("is_torrent", False),
+            torrent_gid=data.get("torrent_gid"),
+            created_at=data.get("created_at") or time.time(),
+            completed_at=data.get("completed_at"),
+            error_message=data.get("error_message"),
+        )
+        # Keep the category chosen at add time (e.g. subtitles are "document", not "other")
+        task.category = data.get("category") or task.determine_category()
+
+        # Reconstruct chunks
+        task.chunks = [
+            Chunk(
+                id=cd["id"],
+                start_byte=cd["start_byte"],
+                end_byte=cd["end_byte"],
+                current_byte=cd["current_byte"],
+                status="completed" if cd["status"] == "completed" or cd["current_byte"] > cd["end_byte"] else "idle",
+            )
+            for cd in data.get("chunks", [])
+        ]
+
+        # Trust the saved state: torrents write straight to save_path, so "the file exists"
+        # does not mean "finished". Only very old records without a status fall back to that guess.
+        saved_status = data.get("status")
+        if saved_status:
+            task.status = RESTORED_AS_IS.get(saved_status, TaskStatus.PAUSED)
+        elif os.path.exists(task.save_path) and not os.path.exists(cls.get_part_path(task.save_path)):
+            task.status = TaskStatus.COMPLETED
+        else:
+            task.status = TaskStatus.PAUSED
+        return task
+
+    # --- Legacy .hydro.meta sidecar files (pre-TaskStore); kept to migrate existing installs ---
+
     @classmethod
     def save_task_meta(cls, task: DownloadTask):
-        """
-        Persists download metadata to allow pause/resume even across system reboots.
-        """
+        """Writes the legacy sidecar metadata file next to the download."""
         if not task.save_path:
             return
-        meta_path = cls.get_meta_path(task.save_path)
         try:
-            data = {
-                "id": task.id,
-                "url": task.url,
-                "filename": task.filename,
-                "save_path": task.save_path,
-                "total_bytes": task.total_bytes,
-                "supports_ranges": task.supports_ranges,
-                "num_connections": task.num_connections,
-                "status": task.status.value,
-                "category": task.category or task.determine_category(),
-                "custom_headers": task.custom_headers,
-                "referrer": task.referrer,
-                "is_hls": getattr(task, "is_hls", False),
-                "hls_info": getattr(task, "hls_info", None),
-                "is_extractor": getattr(task, "is_extractor", False),
-                "selected_format": getattr(task, "selected_format", None),
-                "is_torrent": getattr(task, "is_torrent", False),
-                "torrent_gid": getattr(task, "torrent_gid", None),
-                "created_at": getattr(task, "created_at", None),
-                "completed_at": getattr(task, "completed_at", None),
-                "chunks": [c.to_dict() for c in task.chunks],
-            }
-            with open(meta_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2)
+            with open(cls.get_meta_path(task.save_path), "w", encoding="utf-8") as f:
+                json.dump(cls.task_to_record(task), f, indent=2)
         except Exception as e:
             print(f"[StorageManager] Error saving task metadata: {e}")
 
     @classmethod
     def load_task_meta(cls, meta_path: str) -> Optional[DownloadTask]:
-        """
-        Loads task state from a given .hydro.meta file path.
-        """
+        """Loads task state from a legacy .hydro.meta file."""
         if not os.path.exists(meta_path):
             return None
-
         try:
-            import time
             with open(meta_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-
-            task = DownloadTask(
-                url=data["url"],
-                filename=data["filename"],
-                save_path=data["save_path"],
-                id=data["id"],
-                total_bytes=data.get("total_bytes", 0),
-                supports_ranges=data.get("supports_ranges", False),
-                num_connections=data.get("num_connections", 8),
-                category=data.get("category") or "other",
-                custom_headers=data.get("custom_headers", {}),
-                referrer=data.get("referrer"),
-                is_hls=data.get("is_hls", False),
-                hls_info=data.get("hls_info"),
-                is_extractor=data.get("is_extractor", False),
-                selected_format=data.get("selected_format"),
-                is_torrent=data.get("is_torrent", False),
-                torrent_gid=data.get("torrent_gid"),
-                created_at=data.get("created_at") or time.time(),
-                completed_at=data.get("completed_at"),
-            )
-            task.category = task.determine_category()
-
-            # Reconstruct chunks
-            chunks = []
-            for cd in data.get("chunks", []):
-                chunk = Chunk(
-                    id=cd["id"],
-                    start_byte=cd["start_byte"],
-                    end_byte=cd["end_byte"],
-                    current_byte=cd["current_byte"],
-                    status="completed" if cd["status"] == "completed" or cd["current_byte"] > cd["end_byte"] else "idle",
-                )
-                chunks.append(chunk)
-            task.chunks = chunks
-
-            # Check if actual final file already exists
-            if os.path.exists(task.save_path) and not os.path.exists(cls.get_part_path(task.save_path)):
-                task.status = TaskStatus.COMPLETED
-            else:
-                task.status = TaskStatus.PAUSED
-
-            return task
+                return cls.task_from_record(json.load(f))
         except Exception as e:
             print(f"[StorageManager] Error loading metadata from {meta_path}: {e}")
             return None
 
     @classmethod
-    def scan_and_load_tasks(cls, download_dir: str) -> List[DownloadTask]:
-        """
-        Scans download_dir and category subfolders for all .hydro.meta files and restores tasks so downloads persist.
-        """
-        restored = []
+    def scan_legacy_meta(cls, download_dir: str) -> List[Tuple[str, DownloadTask]]:
+        """Finds legacy .hydro.meta files in download_dir and its subfolders, with their tasks."""
+        found = []
         if not os.path.exists(download_dir):
-            return restored
-
+            return found
         pattern = os.path.join(download_dir, "**", "*.hydro.meta")
         for meta_file in glob.glob(pattern, recursive=True):
             task = cls.load_task_meta(meta_file)
             if task:
-                restored.append(task)
-        return restored
+                found.append((meta_file, task))
+        return found
+
+    @classmethod
+    def scan_and_load_tasks(cls, download_dir: str) -> List[DownloadTask]:
+        return [task for _, task in cls.scan_legacy_meta(download_dir)]
 
     @classmethod
     def finalize_download(cls, task: DownloadTask):
         """
-        Renames .part file to final file and updates persistent task metadata.
+        Renames .part file to final file (the caller persists the task).
         """
         part_path = cls.get_part_path(task.save_path)
 
@@ -221,6 +237,71 @@ class StorageManager:
                     pass
             os.rename(part_path, task.save_path)
 
-        # Update metadata to preserve completed task history across restarts
         task.status = TaskStatus.COMPLETED
-        cls.save_task_meta(task)
+
+
+class TaskStore:
+    """
+    Central SQLite store for download tasks, kept in the app data folder (one row per task id).
+    Replaces the .hydro.meta sidecar files, which cluttered the downloads folder, made removed
+    tasks reappear, and duplicated a task whenever a torrent got renamed.
+    """
+
+    def __init__(self, db_path: str):
+        self.db_path = db_path
+        parent = os.path.dirname(db_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        self._lock = threading.Lock()
+        # Saved from the server loop and from the tray/shutdown threads
+        self._conn = sqlite3.connect(db_path, check_same_thread=False)
+        with self._lock:
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute("PRAGMA synchronous=NORMAL")
+            self._conn.execute(
+                "CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at REAL NOT NULL)"
+            )
+            self._conn.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
+            self._conn.commit()
+
+    def save(self, task: DownloadTask):
+        try:
+            payload = json.dumps(StorageManager.task_to_record(task))
+            with self._lock:
+                self._conn.execute(
+                    "INSERT OR REPLACE INTO tasks (id, data, updated_at) VALUES (?, ?, ?)",
+                    (task.id, payload, time.time()),
+                )
+                self._conn.commit()
+        except Exception as e:
+            print(f"[TaskStore] Error saving task {task.id}: {e}")
+
+    def delete(self, task_id: str):
+        with self._lock:
+            self._conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+            self._conn.commit()
+
+    def load_all(self) -> List[DownloadTask]:
+        with self._lock:
+            rows = self._conn.execute("SELECT id, data FROM tasks").fetchall()
+        tasks = []
+        for task_id, data in rows:
+            try:
+                tasks.append(StorageManager.task_from_record(json.loads(data)))
+            except Exception as e:
+                print(f"[TaskStore] Skipping unreadable task {task_id}: {e}")
+        return tasks
+
+    def get_setting(self, key: str) -> Optional[str]:
+        with self._lock:
+            row = self._conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        return row[0] if row else None
+
+    def set_setting(self, key: str, value: str):
+        with self._lock:
+            self._conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
+            self._conn.commit()
+
+    def close(self):
+        with self._lock:
+            self._conn.close()

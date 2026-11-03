@@ -11,7 +11,8 @@ import unittest
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from openhydro.core import DownloadEngine, DownloadTask, TaskStatus
+from helpers import make_engine
+from openhydro.core import DownloadTask, TaskStatus
 from openhydro.core.security import sanitize_filename, is_within_directory, load_or_create_secret
 from openhydro.core.updater import is_official_release_asset
 from openhydro.core.torrent import TorrentManager
@@ -80,12 +81,10 @@ class TestTorrentRpcSecret(unittest.TestCase):
 class TestApiAccessGuard(unittest.TestCase):
     def setUp(self):
         self.download_dir = tempfile.mkdtemp()
-        self.engine = DownloadEngine(download_dir=self.download_dir)
+        self.addCleanup(shutil.rmtree, self.download_dir, ignore_errors=True)
+        self.engine = make_engine(self, self.download_dir)
         self.app = create_app(self.engine, remote_token=TOKEN)
         self.local = TestClient(self.app, base_url="http://127.0.0.1:8765", client=("127.0.0.1", 50000))
-
-    def tearDown(self):
-        shutil.rmtree(self.download_dir, ignore_errors=True)
 
     def remote_client(self, **kwargs):
         return TestClient(self.app, base_url="http://192.168.1.5:8765", client=("192.168.1.20", 50000), **kwargs)

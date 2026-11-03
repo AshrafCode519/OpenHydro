@@ -15,6 +15,7 @@ from unittest import mock
 
 from starlette.testclient import TestClient
 
+from helpers import make_engine
 from openhydro.core import DownloadEngine, DownloadTask, TaskStatus, StorageManager
 from openhydro.api import create_app
 
@@ -43,7 +44,8 @@ class LifecycleTestCase(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         DownloadEngine.trigger_system_shutdown.reset_mock()
         self.download_dir = tempfile.mkdtemp()
-        self.engine = DownloadEngine(download_dir=self.download_dir)
+        self.addCleanup(shutil.rmtree, self.download_dir, ignore_errors=True)
+        self.engine = make_engine(self, self.download_dir)
         self.engine._execute_download = idle_download
         self.engine.scheduler.set_max_active(2)
         self.probe = mock.patch.object(
@@ -55,7 +57,6 @@ class LifecycleTestCase(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         self.probe.stop()
         await self.engine.pause_all()
-        shutil.rmtree(self.download_dir, ignore_errors=True)
 
     async def add(self, n: int, auto_start: bool = True):
         return [await self.engine.add_download(f"https://example.com/{i}.bin", filename=f"f{i}.bin", auto_start=auto_start)
@@ -157,11 +158,12 @@ class TestAutoShutdown(LifecycleTestCase):
 class TestCrossThreadControl(unittest.TestCase):
     def test_submit_runs_on_the_engine_loop(self):
         download_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, download_dir, ignore_errors=True)
         loop = asyncio.new_event_loop()
         thread = threading.Thread(target=loop.run_forever, daemon=True)
         thread.start()
         try:
-            engine = DownloadEngine(download_dir=download_dir)
+            engine = make_engine(self, download_dir)
             engine._execute_download = idle_download
             task = DownloadTask(url="https://example.com/a.bin", filename="a.bin",
                                 save_path=os.path.join(download_dir, "a.bin"), status=TaskStatus.PAUSED)
@@ -182,7 +184,6 @@ class TestCrossThreadControl(unittest.TestCase):
         finally:
             loop.call_soon_threadsafe(loop.stop)
             thread.join(timeout=5)
-            shutil.rmtree(download_dir, ignore_errors=True)
 
 
 class TestCancelKeepsCancelled(LifecycleTestCase):
@@ -211,12 +212,10 @@ class TestCancelKeepsCancelled(LifecycleTestCase):
 class TestRemoveTask(unittest.TestCase):
     def setUp(self):
         self.download_dir = tempfile.mkdtemp()
-        self.engine = DownloadEngine(download_dir=self.download_dir)
+        self.addCleanup(shutil.rmtree, self.download_dir, ignore_errors=True)
+        self.engine = make_engine(self, self.download_dir)
         self.client = TestClient(create_app(self.engine, remote_token="t"),
                                  base_url="http://127.0.0.1:8765", client=("127.0.0.1", 50000))
-
-    def tearDown(self):
-        shutil.rmtree(self.download_dir, ignore_errors=True)
 
     def make_task(self, name: str, completed: bool) -> DownloadTask:
         path = os.path.join(self.download_dir, name)
@@ -224,7 +223,7 @@ class TestRemoveTask(unittest.TestCase):
                             status=TaskStatus.COMPLETED if completed else TaskStatus.PAUSED)
         with open(path if completed else StorageManager.get_part_path(path), "wb") as f:
             f.write(b"data")
-        StorageManager.save_task_meta(task)
+        self.engine.store.save(task)
         self.engine.tasks[task.id] = task
         return task
 
@@ -234,8 +233,7 @@ class TestRemoveTask(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertNotIn(task.id, self.engine.tasks)
         self.assertTrue(os.path.exists(task.save_path), "the downloaded file must be kept")
-        self.assertFalse(os.path.exists(StorageManager.get_meta_path(task.save_path)))
-        restored = DownloadEngine(download_dir=self.download_dir)
+        restored = make_engine(self, self.download_dir)
         self.assertNotIn(task.id, restored.tasks, "removed task came back after restart")
 
     def test_remove_with_delete_file_deletes_it(self):
@@ -247,7 +245,7 @@ class TestRemoveTask(unittest.TestCase):
         task = self.make_task("big.iso", completed=False)
         self.client.delete(f"/api/tasks/{task.id}")
         self.assertFalse(os.path.exists(StorageManager.get_part_path(task.save_path)))
-        self.assertFalse(os.path.exists(StorageManager.get_meta_path(task.save_path)))
+        self.assertNotIn(task.id, [t.id for t in self.engine.store.load_all()])
 
 
 if __name__ == "__main__":

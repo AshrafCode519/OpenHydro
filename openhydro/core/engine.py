@@ -16,19 +16,20 @@ import httpx
 
 from .task import DownloadTask, Chunk, TaskStatus
 from .segmenter import DynamicSegmenter
-from .storage import StorageManager
+from .storage import StorageManager, TaskStore
 from .limiter import RateLimiter
 from .worker import ChunkWorker, DEFAULT_USER_AGENT, MAX_RETRIES, RETRY_BACKOFF_BASE, shared_ssl_context
 from .hls import HLSStreamParser, HLSDownloader
 from .scheduler import SmartScheduler
 from .extractor import VideoExtractor
 from .torrent import TorrentManager
-from .security import sanitize_filename
+from .security import sanitize_filename, get_app_data_dir
 
 
 class DownloadEngine:
-    def __init__(self, download_dir: Optional[str] = None):
+    def __init__(self, download_dir: Optional[str] = None, store_path: Optional[str] = None):
         self.download_dir = download_dir or StorageManager.get_default_download_dir()
+        self.store = TaskStore(store_path or os.path.join(get_app_data_dir(), "tasks.db"))
         self.tasks: Dict[str, DownloadTask] = {}
         self.rate_limiter = RateLimiter(0)  # Unlimited by default
         self._running_loops: Dict[str, asyncio.Task] = {}
@@ -56,14 +57,31 @@ class DownloadEngine:
         return asyncio.run_coroutine_threadsafe(coro, self._loop)
 
     def _restore_persisted_tasks(self):
-        """Scans download directory on startup and restores interrupted/completed tasks."""
+        """Restores interrupted/completed tasks from the task store on startup."""
         try:
-            persisted = StorageManager.scan_and_load_tasks(self.download_dir)
+            self._import_legacy_meta_files()
             with self._lock:
-                for task in persisted:
+                for task in self.store.load_all():
                     self.tasks[task.id] = task
         except Exception as e:
             print(f"[Engine] Error restoring tasks: {e}")
+
+    def _import_legacy_meta_files(self):
+        """One-time move of the old .hydro.meta sidecar files into the task store."""
+        marker = "legacy_meta_imported:" + os.path.normcase(os.path.abspath(self.download_dir))
+        if self.store.get_setting(marker):
+            return
+        for meta_path, task in StorageManager.scan_legacy_meta(self.download_dir):
+            self.store.save(task)
+            try:
+                os.remove(meta_path)
+            except OSError as e:
+                print(f"[Engine] Could not remove legacy metadata {meta_path}: {e}")
+        self.store.set_setting(marker, "1")
+
+    def close(self):
+        """Releases the task store (call on shutdown after the final saves)."""
+        self.store.close()
 
     def register_listener(self, callback: Callable):
         self._listeners.append(callback)
@@ -290,7 +308,7 @@ class DownloadEngine:
             with self._lock:
                 self.tasks[task.id] = task
 
-            StorageManager.save_task_meta(task)
+            self.store.save(task)
             self._notify("task_added", task)
 
             if auto_start:
@@ -341,10 +359,20 @@ class DownloadEngine:
         final_filename = raw_name
         target_path = os.path.join(save_dir, final_filename)
 
-        # Handle duplicate filenames
+        # Pick a name no existing file, partial download or unfinished task is using:
+        # two tasks sharing one .part file would overwrite each other's data
+        in_use = {
+            os.path.normcase(os.path.abspath(t.save_path))
+            for t in self.tasks.values()
+            if t.status not in (TaskStatus.COMPLETED, TaskStatus.CANCELLED)
+        }
         base, ext = os.path.splitext(target_path)
         counter = 1
-        while os.path.exists(target_path) and not os.path.exists(StorageManager.get_part_path(target_path)):
+        while (
+            os.path.normcase(os.path.abspath(target_path)) in in_use
+            or os.path.exists(target_path)
+            or os.path.exists(StorageManager.get_part_path(target_path))
+        ):
             target_path = f"{base}_{counter}{ext}"
             counter += 1
 
@@ -381,7 +409,7 @@ class DownloadEngine:
         with self._lock:
             self.tasks[task.id] = task
 
-        StorageManager.save_task_meta(task)
+        self.store.save(task)
         self._notify("task_added", task)
 
         if auto_start:
@@ -564,7 +592,7 @@ class DownloadEngine:
                         task.eta_seconds = None
 
                     self._notify("task_progress", task)
-                    StorageManager.save_task_meta(task)
+                    self.store.save(task)
 
         try:
             monitor_task = asyncio.create_task(speed_monitor())
@@ -622,7 +650,7 @@ class DownloadEngine:
                     await w.close()
                 except Exception:
                     pass
-            StorageManager.save_task_meta(task)
+            self.store.save(task)
 
     async def _execute_extractor_download(self, task: DownloadTask):
         """Downloads videos from platforms using yt-dlp with multi-threaded concurrent fragment streams."""
@@ -685,7 +713,7 @@ class DownloadEngine:
             task.error_message = str(e)
             self._notify("task_error", task)
         finally:
-            StorageManager.save_task_meta(task)
+            self.store.save(task)
 
     async def _execute_hls_download(self, task: DownloadTask):
         """Executes HLS (.m3u8) stream downloading and remuxing."""
@@ -790,7 +818,7 @@ class DownloadEngine:
             task.error_message = str(e)
             self._notify("task_error", task)
         finally:
-            StorageManager.save_task_meta(task)
+            self.store.save(task)
 
     async def _execute_torrent_download(self, task: DownloadTask):
         """Downloads BitTorrent or Magnet links via embedded aria2 JSON-RPC engine."""
@@ -819,7 +847,7 @@ class DownloadEngine:
                 else:
                     gid = await self.torrent_manager.add_magnet(task.url, save_dir=target_save_dir)
                 task.torrent_gid = gid
-                StorageManager.save_task_meta(task)
+                self.store.save(task)
             else:
                 # Resumed manually or started from the queue: un-pause it in aria2
                 await self.torrent_manager.resume(task.torrent_gid)
@@ -835,7 +863,7 @@ class DownloadEngine:
                             task.torrent_gid = await self.torrent_manager.add_magnet(task.url, save_dir=target_save_dir)
                         elif task.url.lower().endswith(".torrent") and os.path.exists(task.url):
                             task.torrent_gid = await self.torrent_manager.add_torrent_file(task.url, save_dir=target_save_dir)
-                        StorageManager.save_task_meta(task)
+                        self.store.save(task)
                     except Exception:
                         pass
                     continue
@@ -844,7 +872,7 @@ class DownloadEngine:
                 followed_by = status.get("followedBy")
                 if followed_by and len(followed_by) > 0:
                     task.torrent_gid = followed_by[0]
-                    StorageManager.save_task_meta(task)
+                    self.store.save(task)
                     continue
 
                 state = status.get("status")  # active, waiting, paused, error, complete, removed
@@ -879,7 +907,7 @@ class DownloadEngine:
                 if state == "complete":
                     if status.get("followedBy"):
                         task.torrent_gid = status["followedBy"][0]
-                        StorageManager.save_task_meta(task)
+                        self.store.save(task)
                         continue
 
                     task.status = TaskStatus.COMPLETED
@@ -889,7 +917,7 @@ class DownloadEngine:
                     if task.chunks:
                         task.chunks[0].status = "completed"
                         task.chunks[0].current_byte = total_len
-                    StorageManager.save_task_meta(task)
+                    self.store.save(task)
                     self._notify("task_completed", task)
                     return
 
@@ -901,7 +929,7 @@ class DownloadEngine:
                     return
 
                 self._notify("task_progress", task)
-                StorageManager.save_task_meta(task)
+                self.store.save(task)
 
         except asyncio.CancelledError:
             if task.status == TaskStatus.DOWNLOADING:
@@ -917,14 +945,14 @@ class DownloadEngine:
             task.error_message = str(e)
             self._notify("task_error", task)
         finally:
-            StorageManager.save_task_meta(task)
+            self.store.save(task)
 
     async def pause_task(self, task_id: str):
         task = self.tasks.get(task_id)
         if task and task.status == TaskStatus.QUEUED:
             # Hold a waiting task so the scheduler does not start it
             task.status = TaskStatus.PAUSED
-            StorageManager.save_task_meta(task)
+            self.store.save(task)
             self._notify("task_updated", task)
         elif task and task.status == TaskStatus.DOWNLOADING:
             task.status = TaskStatus.PAUSED
@@ -942,7 +970,7 @@ class DownloadEngine:
             if loop_task and not loop_task.done():
                 loop_task.cancel()
 
-            StorageManager.save_task_meta(task)
+            self.store.save(task)
             self._notify("task_updated", task)
 
     async def resume_task(self, task_id: str, respect_queue: bool = False):
@@ -990,7 +1018,7 @@ class DownloadEngine:
                 pass
 
         task.url = new_url
-        StorageManager.save_task_meta(task)
+        self.store.save(task)
         if task.status in (TaskStatus.PAUSED, TaskStatus.ERROR):
             await self.resume_task(task_id)
         return True
@@ -1012,11 +1040,7 @@ class DownloadEngine:
                 await asyncio.wait({loop_task}, timeout=5.0)
 
             if delete_file:
-                paths = [
-                    StorageManager.get_part_path(task.save_path),
-                    StorageManager.get_meta_path(task.save_path),
-                    task.save_path,
-                ]
+                paths = [StorageManager.get_part_path(task.save_path), task.save_path]
                 if task.is_torrent:
                     paths.append(task.save_path + ".aria2")  # aria2 control file
                 for p in paths:
@@ -1026,7 +1050,7 @@ class DownloadEngine:
 
     async def remove_task(self, task_id: str, delete_file: bool = False):
         """
-        Stops a task and forgets it. Its metadata and temporary .part are always removed so it
+        Stops a task and forgets it. Its stored record and temporary .part are always removed so it
         does not come back after a restart; the downloaded file itself is deleted only on request.
         """
         task = self.tasks.get(task_id)
@@ -1034,7 +1058,7 @@ class DownloadEngine:
             return
         await self.cancel_task(task_id, delete_file=delete_file)
         self._remove_path(StorageManager.get_part_path(task.save_path))
-        self._remove_path(StorageManager.get_meta_path(task.save_path))
+        self.store.delete(task_id)
         with self._lock:
             self.tasks.pop(task_id, None)
         self._running_loops.pop(task_id, None)

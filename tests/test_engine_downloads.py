@@ -55,6 +55,9 @@ class _FileHandler(BaseHTTPRequestHandler):
             end = min(int(m.group(2)) if m.group(2) else len(data) - 1, len(data) - 1)
             partial = True
 
+        if srv.stall_first_chunk and 0 < start < len(data) // 2:
+            srv.split_requested.set()  # a piece split off the first chunk is being fetched
+
         status = srv.failure_for(start)
         if status:
             return self._empty(status)
@@ -70,8 +73,10 @@ class _FileHandler(BaseHTTPRequestHandler):
         try:
             for i in range(0, len(body), BLOCK):
                 self.wfile.write(body[i:i + BLOCK])
-                if srv.slow_below is not None and start < srv.slow_below:
-                    time.sleep(0.05)  # ~1.3 MB/s: far slower than the fast half even on a loaded machine
+                if srv.stall_first_chunk and start == 0 and i == 4 * BLOCK:
+                    # The first connection stalls until the engine splits its chunk (or gives up after
+                    # 10 s), so the outcome never depends on how fast or loaded the machine is
+                    srv.split_requested.wait(timeout=10)
         except OSError:
             pass  # Client closed the stream at a (dynamically moved) chunk boundary
 
@@ -79,11 +84,12 @@ class _FileHandler(BaseHTTPRequestHandler):
 class _TestServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, payload: bytes, mode: str = "normal", slow_below=None):
+    def __init__(self, payload: bytes, mode: str = "normal", stall_first_chunk: bool = False):
         super().__init__(("127.0.0.1", 0), _FileHandler)
         self.payload = payload
         self.mode = mode
-        self.slow_below = slow_below
+        self.stall_first_chunk = stall_first_chunk
+        self.split_requested = threading.Event()
         self.flaky_left = 1
         self.failures_served = 0
         self._lock = threading.Lock()
@@ -120,8 +126,8 @@ class EngineDownloadTestCase(unittest.IsolatedAsyncioTestCase):
             self.server.shutdown()
             self.server.server_close()
 
-    def serve(self, mode="normal", slow_below=None) -> str:
-        self.server = _TestServer(self.payload, mode, slow_below)
+    def serve(self, mode="normal", stall_first_chunk=False) -> str:
+        self.server = _TestServer(self.payload, mode, stall_first_chunk)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         return f"http://127.0.0.1:{self.server.server_address[1]}/file.bin"
 
@@ -159,8 +165,8 @@ class TestDynamicSplitting(EngineDownloadTestCase):
         self.assertGreater(largest.end_byte, largest.current_byte)
 
     async def test_finished_workers_help_the_slow_chunk(self):
-        # The first half is served slowly: once the fast worker is done it must split the slow chunk
-        url = self.serve(slow_below=4 * MB)
+        # The first chunk's connection stalls: once the other worker is done it must split that chunk
+        url = self.serve(stall_first_chunk=True)
         task = await self.download(url, connections=2)
         self.assertDownloadedIntact(task)
         self.assertGreater(len(task.chunks), 2, "no dynamic split happened")

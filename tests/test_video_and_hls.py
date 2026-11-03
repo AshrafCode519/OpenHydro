@@ -89,6 +89,13 @@ class TestExtractorOutput(unittest.TestCase):
         self.assertTrue(FakeYoutubeDL.last_opts["outtmpl"].endswith("100%% Real.%(ext)s"))
         self.assertEqual(result, os.path.join(self.dir, "100% Real.mp4"))
 
+    def test_compatible_codecs_are_preferred_without_lowering_resolution(self):
+        self.run_download("Clip.mp4", "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best", [".mp4"])
+        # Resolution first: H.264/AAC only win among formats of the chosen size (no 4K -> 1080p downgrade)
+        self.assertEqual(FakeYoutubeDL.last_opts["format_sort"], ["res:1080", "vcodec:h264", "acodec:aac"])
+        self.run_download("Clip.mp4", "bestvideo+bestaudio/best", [".mp4"])
+        self.assertEqual(FakeYoutubeDL.last_opts["format_sort"], ["res", "vcodec:h264", "acodec:aac"])
+
     def test_m4a_request_keeps_real_audio_extension(self):
         result = self.run_download("Song.m4a", "audio_m4a", [".opus"])
         self.assertEqual(result, os.path.join(self.dir, "Song.opus"))

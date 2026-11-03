@@ -349,6 +349,16 @@ class VideoExtractor:
         return out_base.replace("%", "%%") + ".%(ext)s"
 
     @staticmethod
+    def _compatible_format_sort(format_selector: str) -> List[str]:
+        """
+        yt-dlp ranking: H.264 video and AAC audio win among formats of the same resolution, since an
+        mp4 with AV1/VP9 + Opus does not play in Windows' default player or on many phones and TVs.
+        Resolution stays first, so a 4K pick (no H.264 at that size) is never downgraded to 1080p.
+        """
+        cap = re.search(r"height<=(\d+)", format_selector)
+        return [f"res:{cap.group(1)}" if cap else "res", "vcodec:h264", "acodec:aac"]
+
+    @staticmethod
     def _locate_output(out_base: str, extensions) -> Optional[str]:
         """
         Returns "<out_base>.<ext>" for the first extension that exists. Exact names only: never a
@@ -501,6 +511,7 @@ class VideoExtractor:
             ydl_opts = {
                 **common_opts,
                 "format": format_selector,
+                "format_sort": cls._compatible_format_sort(format_selector),
                 "merge_output_format": "mp4",
                 "http_headers": {
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",

@@ -15,17 +15,28 @@ from typing import Dict, Optional, List, Any
 from urllib.parse import urlparse, parse_qs, unquote
 import httpx
 
+from .security import load_or_create_secret
+
 
 class TorrentManager:
-    def __init__(self, download_dir: str, rpc_port: int = 6812):
+    def __init__(self, download_dir: str, rpc_port: int = 6812, rpc_secret: Optional[str] = None):
         self.download_dir = download_dir
         self.rpc_port = rpc_port
         self.rpc_url = f"http://127.0.0.1:{self.rpc_port}/jsonrpc"
+        self._rpc_secret = rpc_secret
         self._proc: Optional[subprocess.Popen] = None
         self._http_client: Optional[httpx.AsyncClient] = None
         self._lock = asyncio.Lock()
+        self._legacy_checked = False
         self.binary_path = self._locate_binary()
         atexit.register(self.stop)
+
+    @property
+    def rpc_secret(self) -> str:
+        """Per-install RPC secret so web pages and other apps cannot drive aria2 (loaded lazily)."""
+        if not self._rpc_secret:
+            self._rpc_secret = load_or_create_secret("aria2_rpc_secret")
+        return self._rpc_secret
 
     def _locate_binary(self) -> Optional[str]:
         """Finds aria2c executable in project bundle or system path."""
@@ -75,44 +86,29 @@ class TorrentManager:
             self._http_client = httpx.AsyncClient(timeout=4.0)
 
         # Check if already running on rpc_port
-        try:
-            r = await self._http_client.post(self.rpc_url, json={
-                "jsonrpc": "2.0", "id": "ping", "method": "aria2.getVersion"
-            })
-            if r.status_code == 200:
-                return True
-        except Exception:
-            pass
+        state = await self._ping()
+        if state and not self._legacy_checked:
+            self._legacy_checked = True
+            if await self._ping(authenticated=False):
+                # Daemon left over from an older build started without --rpc-secret: replace it
+                print("[TorrentManager] Replacing unauthenticated aria2c daemon.")
+                await self._post(self._payload("aria2.forceShutdown", authenticated=False))
+                await asyncio.sleep(0.5)
+                state = await self._ping()
+        if state:
+            return True
+        if state is False:
+            print(f"[TorrentManager] Port {self.rpc_port} is held by another aria2c instance that rejected our secret.")
+            return False
 
         # Spawn aria2c in background
         try:
-            cmd = [
-                self.binary_path,
-                "--enable-rpc=true",
-                f"--rpc-listen-port={self.rpc_port}",
-                "--rpc-listen-all=false",
-                "--rpc-allow-origin-all=true",
-                "--dir=" + self.download_dir,
-                "--max-connection-per-server=16",
-                "--split=16",
-                "--min-split-size=1M",
-                "--bt-enable-dht=true",
-                "--enable-dht6=false",
-                "--dht-listen-port=6881",
-                "--bt-max-peers=100",
-                "--seed-time=0",
-                "--auto-file-renaming=false",
-                "--allow-overwrite=true",
-                "--summary-interval=0",
-                "--quiet=true",
-            ]
-
             flags = 0
             if sys.platform.startswith("win"):
                 flags = subprocess.CREATE_NO_WINDOW
 
             self._proc = subprocess.Popen(
-                cmd,
+                self._build_command(),
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 creationflags=flags
@@ -121,17 +117,60 @@ class TorrentManager:
             # Wait briefly for RPC to be responsive
             for _ in range(15):
                 await asyncio.sleep(0.2)
-                try:
-                    r = await self._http_client.post(self.rpc_url, json={
-                        "jsonrpc": "2.0", "id": "check", "method": "aria2.getVersion"
-                    })
-                    if r.status_code == 200:
-                        return True
-                except Exception:
-                    pass
+                if await self._ping():
+                    return True
             return False
         except Exception as e:
             print(f"[TorrentManager] Failed to launch aria2c: {e}")
+            return False
+
+    def _build_command(self) -> List[str]:
+        return [
+            self.binary_path,
+            "--enable-rpc=true",
+            f"--rpc-listen-port={self.rpc_port}",
+            "--rpc-listen-all=false",
+            f"--rpc-secret={self.rpc_secret}",
+            "--dir=" + self.download_dir,
+            "--max-connection-per-server=16",
+            "--split=16",
+            "--min-split-size=1M",
+            "--bt-enable-dht=true",
+            "--enable-dht6=false",
+            "--dht-listen-port=6881",
+            "--bt-max-peers=100",
+            "--seed-time=0",
+            "--auto-file-renaming=false",
+            "--allow-overwrite=true",
+            "--summary-interval=0",
+            "--quiet=true",
+        ]
+
+    def _payload(self, method: str, params: List[Any] = None, authenticated: bool = True) -> Dict[str, Any]:
+        rpc_params = list(params or [])
+        if authenticated:
+            rpc_params.insert(0, f"token:{self.rpc_secret}")
+        return {
+            "jsonrpc": "2.0",
+            "id": f"call_{int(time.time() * 1000)}",
+            "method": method,
+            "params": rpc_params,
+        }
+
+    async def _post(self, payload: Dict[str, Any]) -> Optional[httpx.Response]:
+        try:
+            return await self._http_client.post(self.rpc_url, json=payload)
+        except Exception:
+            return None
+
+    async def _ping(self, authenticated: bool = True) -> Optional[bool]:
+        """True if aria2 accepts the call, False if it answers with an error (e.g. Unauthorized), None if nothing listens."""
+        resp = await self._post(self._payload("aria2.getVersion", authenticated=authenticated))
+        if resp is None:
+            return None
+        try:
+            return "result" in resp.json()
+        except ValueError:
             return False
 
     async def _call(self, method: str, params: List[Any] = None) -> Any:
@@ -139,13 +178,7 @@ class TorrentManager:
         if not self._http_client:
             self._http_client = httpx.AsyncClient(timeout=4.0)
 
-        payload = {
-            "jsonrpc": "2.0",
-            "id": f"call_{int(time.time() * 1000)}",
-            "method": method,
-            "params": params or []
-        }
-        resp = await self._http_client.post(self.rpc_url, json=payload)
+        resp = await self._http_client.post(self.rpc_url, json=self._payload(method, params))
         data = resp.json()
         if "error" in data:
             raise RuntimeError(data["error"].get("message", "aria2 RPC error"))

@@ -169,9 +169,9 @@ def main():
     server_thread.start()
 
     # Actively wait until the FastAPI TCP server is confirmed UP and responding!
-    server_ready = wait_for_server(HOST, PORT, timeout=12.0)
+    server_ready = wait_for_server("127.0.0.1", PORT, timeout=12.0)
     if not server_ready:
-        print(f"[OpenHydro] Warning: Server socket did not bind within timeout.")
+        print("[OpenHydro] Warning: Server socket did not bind within timeout.")
 
     if args.headless:
         print("[OpenHydro] Running in headless mode. Press Ctrl+C to exit.")

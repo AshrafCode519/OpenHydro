@@ -652,7 +652,7 @@ class DownloadEngine:
                     pass
             self.store.save(task)
 
-    async def _execute_extractor_download(self, task: DownloadTask):
+    async def _execute_extractor_download(self, task: DownloadTask, http_headers: Optional[Dict[str, str]] = None):
         """Downloads videos from platforms using yt-dlp with multi-threaded concurrent fragment streams."""
         num_conns = max(8, task.num_connections or 16)
         task.num_connections = num_conns
@@ -677,17 +677,22 @@ class DownloadEngine:
 
         try:
             fmt = task.selected_format or "bestvideo+bestaudio/best"
-            success = await VideoExtractor.download(
+            final_path = await VideoExtractor.download(
                 url=task.url,
                 output_path=task.save_path,
                 format_selector=fmt,
                 num_connections=num_conns,
                 on_progress=on_progress,
                 is_cancelled=lambda: task.status != TaskStatus.DOWNLOADING,
+                http_headers=http_headers,
             )
 
             if task.status == TaskStatus.DOWNLOADING:
-                if success:
+                if final_path:
+                    if final_path != task.save_path:
+                        # e.g. .webm when ffmpeg is missing, or "<title>.<lang>.srt": point at the real file
+                        task.save_path = final_path
+                        task.filename = os.path.basename(final_path)
                     task.status = TaskStatus.COMPLETED
                     task.completed_at = time.time()
                     task.speed = 0.0
@@ -720,6 +725,11 @@ class DownloadEngine:
         temp_dir = task.save_path + "_hls_temp"
         os.makedirs(temp_dir, exist_ok=True)
 
+        # Playlist, segments (and keys, via yt-dlp) all need the same headers as the page
+        hls_headers = {"User-Agent": DEFAULT_USER_AGENT, **task.custom_headers}
+        if task.referrer:
+            hls_headers["Referer"] = task.referrer
+
         try:
             # 1. Resolve media playlist
             playlist_url = task.url
@@ -729,11 +739,18 @@ class DownloadEngine:
                     # Choose highest quality
                     playlist_url = qualities[0]["url"]
 
-            media_info = await HLSStreamParser.fetch_and_parse(playlist_url, task.custom_headers)
+            media_info = await HLSStreamParser.fetch_and_parse(playlist_url, hls_headers)
             if media_info.get("type") == "master":
                 # Nested master, resolve first quality
                 playlist_url = media_info["qualities"][0]["url"]
-                media_info = await HLSStreamParser.fetch_and_parse(playlist_url, task.custom_headers)
+                media_info = await HLSStreamParser.fetch_and_parse(playlist_url, hls_headers)
+
+            if media_info.get("encrypted") or media_info.get("fmp4"):
+                # Plain concatenation would produce an unplayable file: yt-dlp's HLS downloader
+                # handles AES-128 decryption and fMP4 init segments
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                await self._execute_extractor_download(task, http_headers=hls_headers)
+                return
 
             segments = media_info.get("segments", [])
             if not segments:
@@ -783,14 +800,25 @@ class DownloadEngine:
                 rate_limiter=self.rate_limiter,
                 on_progress=on_hls_progress,
                 is_cancelled=lambda: task.status != TaskStatus.DOWNLOADING,
+                headers=hls_headers,
             )
 
             if task.status != TaskStatus.DOWNLOADING:
                 return
 
-            # 3. Assemble stream into final video file
-            success = HLSDownloader.assemble_stream(downloaded, task.save_path)
-            if success:
+            # A gap in the segment list means a broken video: report it (resume retries only the missing ones)
+            missing = sum(1 for path in downloaded if not path)
+            if missing:
+                raise RuntimeError(f"تعذر تحميل {missing} من {total_segs} جزء من البث")
+
+            # 3. Assemble stream into final video file (FFmpeg runs off the event loop)
+            output_path = await asyncio.to_thread(HLSDownloader.assemble_stream, downloaded, task.save_path)
+            if output_path:
+                if output_path != task.save_path:
+                    # Without FFmpeg the stream is saved as .ts rather than mislabelled .mp4
+                    task.save_path = output_path
+                    task.filename = os.path.basename(output_path)
+                task.total_bytes = os.path.getsize(output_path)
                 task.status = TaskStatus.COMPLETED
                 task.completed_at = time.time()
                 task.speed = 0.0

@@ -204,21 +204,24 @@ class GoogleDriveHandler:
 
         timeout = httpx.Timeout(25.0, connect=10.0)
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-            resp = await client.get(start_url, headers=headers)
-            final_url = str(resp.url)
+            # Streamed: only the small HTML warning page is read; a direct file response is
+            # closed unread instead of downloading the whole file into memory just to probe it
+            async with client.stream("GET", start_url, headers=headers) as resp:
+                final_url = str(resp.url)
+                content_type = resp.headers.get("content-type", "").lower()
+                page = (await resp.aread()).decode("utf-8", errors="replace") if "text/html" in content_type else ""
 
             # Check if this is an HTML confirmation page (large file virus scan warning)
-            content_type = resp.headers.get("content-type", "").lower()
-            if "text/html" in content_type and ("confirm" in resp.text.lower() or "download-form" in resp.text):
+            if page and ("confirm" in page.lower() or "download-form" in page):
                 # Parse hidden inputs and action URL
-                inputs = re.findall(r'<input\s+type="hidden"\s+name="([^"]+)"\s+value="([^"]*)"', resp.text)
+                inputs = re.findall(r'<input\s+type="hidden"\s+name="([^"]+)"\s+value="([^"]*)"', page)
                 params = {name: val for name, val in inputs}
                 if "confirm" not in params:
                     params["confirm"] = "t"
                 if "id" not in params:
                     params["id"] = file_id
 
-                form_m = re.search(r'<form[^>]*action="([^"]+)"', resp.text)
+                form_m = re.search(r'<form[^>]*action="([^"]+)"', page)
                 action_url = form_m.group(1) if form_m else "https://drive.usercontent.google.com/download"
 
                 query_str = urllib.parse.urlencode(params)
@@ -227,7 +230,8 @@ class GoogleDriveHandler:
 
                 # Send a Range 0-0 probe to get the real headers and filename
                 probe_headers = {**headers, "Range": "bytes=0-0"}
-                probe_resp = await client.get(confirmed_url, headers=probe_headers)
+                async with client.stream("GET", confirmed_url, headers=probe_headers) as probe_resp:
+                    pass
                 cd = probe_resp.headers.get("content-disposition", "")
                 if "filename=" in cd:
                     fn_match = re.search(r'filename\*?=(?:UTF-8\'\')?["\']?([^";\r\n]+)["\']?', cd, re.IGNORECASE)

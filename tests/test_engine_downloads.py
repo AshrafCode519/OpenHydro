@@ -14,6 +14,7 @@ import unittest
 from unittest import mock
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from helpers import make_engine
 from openhydro.core import DownloadEngine, DownloadTask, Chunk, TaskStatus, DynamicSegmenter
 
 MB = 1024 * 1024
@@ -106,6 +107,7 @@ class EngineDownloadTestCase(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self):
         self.download_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.download_dir, ignore_errors=True)
         self.payload = os.urandom(self.payload_size)
         self.server = None
 
@@ -113,7 +115,6 @@ class EngineDownloadTestCase(unittest.IsolatedAsyncioTestCase):
         if self.server:
             self.server.shutdown()
             self.server.server_close()
-        shutil.rmtree(self.download_dir, ignore_errors=True)
 
     def serve(self, mode="normal", slow_below=None) -> str:
         self.server = _TestServer(self.payload, mode, slow_below)
@@ -121,7 +122,7 @@ class EngineDownloadTestCase(unittest.IsolatedAsyncioTestCase):
         return f"http://127.0.0.1:{self.server.server_address[1]}/file.bin"
 
     async def download(self, url: str, connections: int = 4) -> DownloadTask:
-        engine = DownloadEngine(download_dir=self.download_dir)
+        engine = make_engine(self, self.download_dir)
         task = await engine.add_download(url, num_connections=connections, auto_start=False)
         await engine.start_task(task.id)
         await asyncio.wait_for(engine._running_loops[task.id], timeout=60)
@@ -201,7 +202,7 @@ class TestServerQuirks(EngineDownloadTestCase):
 
     async def test_single_stream_restarts_progress(self):
         url = self.serve("no_range")
-        engine = DownloadEngine(download_dir=self.download_dir)
+        engine = make_engine(self, self.download_dir)
         task = await engine.add_download(url, auto_start=False)
         self.assertFalse(task.supports_ranges)
         # Leftover progress from an interrupted attempt must not inflate the final size

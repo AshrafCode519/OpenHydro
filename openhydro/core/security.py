@@ -15,7 +15,14 @@ INVALID_FILENAME_CHARS = re.compile(r'[\\/*?:"<>|\x00-\x1f]')
 
 
 def get_app_data_dir() -> str:
-    """Per-user application data folder (%LOCALAPPDATA%\\OpenHydro or ~/.config/openhydro)."""
+    """
+    Per-user application data folder (%LOCALAPPDATA%\\OpenHydro or ~/.config/openhydro).
+    OPENHYDRO_DATA_DIR overrides it (portable installs, isolated test runs).
+    """
+    override = os.environ.get("OPENHYDRO_DATA_DIR")
+    if override:
+        os.makedirs(override, exist_ok=True)
+        return override
     if sys.platform == "win32":
         base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
         path = os.path.join(base, "OpenHydro")

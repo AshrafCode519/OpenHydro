@@ -47,7 +47,7 @@ if sys.platform == "win32":
 import asyncio
 import uvicorn
 
-from openhydro.core import DownloadEngine, TaskStatus, StorageManager, SystemTrayManager
+from openhydro.core import DownloadEngine, TaskStatus, SystemTrayManager
 from openhydro.api import create_app
 
 PORT = 8765
@@ -67,7 +67,7 @@ def cleanup(engine: DownloadEngine, tray: SystemTrayManager = None):
     for task in list(engine.tasks.values()):
         if task.status == TaskStatus.DOWNLOADING:
             task.status = TaskStatus.PAUSED
-            StorageManager.save_task_meta(task)
+            engine.store.save(task)
 
 
 def wait_for_server(host: str, port: int, timeout: float = 12.0) -> bool:

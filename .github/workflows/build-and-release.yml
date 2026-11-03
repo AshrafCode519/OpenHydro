@@ -6,6 +6,10 @@ on:
       - main
     tags:
       - 'v*'
+  # Lint, tests and both builds run on every PR before it can reach main (releases stay tag-only)
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:

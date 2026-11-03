@@ -6,9 +6,10 @@ Provides full Video, Audio (MP3/M4A), and Subtitles/Text Transcript (SRT/TXT) ex
 
 import os
 import re
+import glob
 import asyncio
 from typing import Dict, List, Optional, Callable
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 
 from .hls import HLSDownloader
 
@@ -23,6 +24,11 @@ VIDEO_DOMAINS = [
     "bilibili.com",
     "reddit.com",
 ]
+
+# Containers yt-dlp may produce, preferred first (without ffmpeg it cannot merge into .mp4)
+VIDEO_EXTS = ("mp4", "mkv", "webm", "mov", "m4v", "flv")
+AUDIO_EXTS = ("m4a", "opus", "webm", "ogg", "aac", "mp3")
+SUBTITLE_EXTS = ("srt", "vtt", "ass")
 
 
 class VideoExtractor:
@@ -61,9 +67,9 @@ class VideoExtractor:
     def is_video_site(url: str) -> bool:
         """Determines if the URL belongs to a supported video streaming platform."""
         try:
-            parsed = urlparse(url)
-            domain = parsed.netloc.lower()
-            return any(d in domain for d in VIDEO_DOMAINS)
+            # Whole domain or a subdomain of it: a plain substring test let "x.com" match dropbox.com
+            host = (urlparse(url).hostname or "").lower()
+            return any(host == d or host.endswith("." + d) for d in VIDEO_DOMAINS)
         except Exception:
             return False
 
@@ -75,7 +81,9 @@ class VideoExtractor:
             if GoogleDriveHandler.is_gdrive_folder(url) or len(GoogleDriveHandler.find_all_file_ids(url)) > 1:
                 return True
             lower = url.lower()
-            return ("list=" in lower and "index=" not in lower) or "youtube.com/playlist" in lower or "/sets/" in lower
+            # Exact "list" query parameter, so e.g. "?checklist=1" on a file link is not a playlist
+            params = parse_qs(urlparse(lower).query)
+            return ("list" in params and "index" not in params) or "youtube.com/playlist" in lower or "/sets/" in lower
         except Exception:
             return False
 
@@ -324,14 +332,33 @@ class VideoExtractor:
         num_connections: int = 16,
         on_progress: Optional[Callable] = None,
         is_cancelled: Optional[Callable] = None,
-    ) -> bool:
+        http_headers: Optional[Dict[str, str]] = None,
+    ) -> Optional[str]:
         """
         Executes download for Video, Audio, or Subtitle/Text transcript with multi-threaded concurrent fragment downloads.
+        Returns the path of the file actually written (its extension may differ from output_path), or None on failure.
         """
         url = cls.normalize_url(url)
         return await asyncio.to_thread(
-            cls._sync_download, url, output_path, format_selector, num_connections, on_progress, is_cancelled
+            cls._sync_download, url, output_path, format_selector, num_connections, on_progress, is_cancelled, http_headers
         )
+
+    @staticmethod
+    def _outtmpl(out_base: str) -> str:
+        # "%" is yt-dlp template syntax: a title such as "100% Real" must be escaped
+        return out_base.replace("%", "%%") + ".%(ext)s"
+
+    @staticmethod
+    def _locate_output(out_base: str, extensions) -> Optional[str]:
+        """
+        Returns "<out_base>.<ext>" for the first extension that exists. Exact names only: never a
+        format fragment (.f137.mp4), a temp file (.part/.ytdl) or another download sharing the prefix.
+        """
+        for ext in extensions:
+            candidate = f"{out_base}.{ext}"
+            if os.path.exists(candidate):
+                return candidate
+        return None
 
     @classmethod
     def _sync_download(
@@ -342,7 +369,8 @@ class VideoExtractor:
         num_connections: int,
         on_progress: Optional[Callable],
         is_cancelled: Optional[Callable],
-    ) -> bool:
+        http_headers: Optional[Dict[str, str]] = None,
+    ) -> Optional[str]:
         import yt_dlp
 
         ffmpeg_bin = HLSDownloader.find_ffmpeg()
@@ -365,6 +393,9 @@ class VideoExtractor:
                 eta = d.get("eta") or 0
                 on_progress(downloaded, total, speed, eta)
 
+        # Base path without extension
+        out_base, _ = os.path.splitext(output_path)
+
         # --- Case 1: Subtitle or Text Transcript Download ---
         if format_selector in ("subtitle_srt", "subtitle_txt"):
             yt_id = cls.extract_youtube_video_id(url)
@@ -385,12 +416,10 @@ class VideoExtractor:
 
                     if format_selector == "subtitle_srt":
                         content = SRTFormatter().format_transcript(transcript)
-                        if not output_path.endswith(".srt"):
-                            output_path = os.path.splitext(output_path)[0] + ".srt"
+                        output_path = out_base + ".srt"
                     else:
                         content = TextFormatter().format_transcript(transcript)
-                        if not output_path.endswith(".txt"):
-                            output_path = os.path.splitext(output_path)[0] + ".txt"
+                        output_path = out_base + ".txt"
 
                     parent = os.path.dirname(output_path)
                     if parent:
@@ -401,153 +430,88 @@ class VideoExtractor:
                     if on_progress:
                         sz = len(content.encode("utf-8"))
                         on_progress(sz, sz, 1024 * 1024, 0)
-                    return True
+                    return output_path
                 except Exception as e:
                     print(f"[VideoExtractor] YouTube transcript error: {e}")
-                    return False
-            else:
-                # Non-YouTube subtitles via yt-dlp
-                out_base, _ = os.path.splitext(output_path)
-                ydl_opts = {
-                    "skip_download": True,
-                    "writesubtitles": True,
-                    "writeautomaticsub": True,
-                    "subtitlesformat": "srt" if format_selector == "subtitle_srt" else "vtt",
-                    "outtmpl": out_base + ".%(ext)s",
-                    "quiet": True,
-                    "no_warnings": True,
-                }
+                    return None
+
+            # Non-YouTube subtitles via yt-dlp
+            wanted = "srt" if format_selector == "subtitle_srt" else "vtt"
+            ydl_opts = {
+                "skip_download": True,
+                "writesubtitles": True,
+                "writeautomaticsub": True,
+                "subtitlesformat": wanted,
+                "outtmpl": cls._outtmpl(out_base),
+                "quiet": True,
+                "no_warnings": True,
+            }
+            try:
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     ydl.download([url])
-                return True
+            except Exception as e:
+                print(f"[VideoExtractor] Subtitle download failed: {e}")
+                return None
+            # yt-dlp names subtitle files "<base>.<language>.<ext>" and may fall back to another format
+            for ext in (wanted,) + tuple(x for x in SUBTITLE_EXTS if x != wanted):
+                matches = sorted(glob.glob(glob.escape(out_base) + f".*.{ext}"))
+                if matches:
+                    return matches[0]
+            return None
 
-        # Base template without extension
-        out_base, _ = os.path.splitext(output_path)
+        common_opts = {
+            "outtmpl": cls._outtmpl(out_base),
+            "concurrent_fragment_downloads": max(8, num_connections or 16),
+            "buffersize": 1024 * 1024,
+            "http_chunk_size": 10 * 1024 * 1024,
+            "retries": 10,
+            "fragment_retries": 10,
+            "quiet": True,
+            "no_warnings": True,
+            "progress_hooks": [progress_hook],
+        }
+        if ffmpeg_bin:
+            common_opts["ffmpeg_location"] = os.path.dirname(ffmpeg_bin)
+        if http_headers:
+            common_opts["http_headers"] = dict(http_headers)
 
         # --- Case 2: Audio Only (MP3 320kbps) ---
         if format_selector == "audio_mp3":
-            if not output_path.endswith(".mp3"):
-                output_path = out_base + ".mp3"
-
             ydl_opts = {
+                **common_opts,
                 "format": "bestaudio/best",
-                "outtmpl": out_base + ".%(ext)s",
                 "postprocessors": [{
                     "key": "FFmpegExtractAudio",
                     "preferredcodec": "mp3",
                     "preferredquality": "320",
                 }],
-                "concurrent_fragment_downloads": max(8, num_connections or 16),
-                "buffersize": 1024 * 1024,
-                "http_chunk_size": 10 * 1024 * 1024,
-                "retries": 10,
-                "fragment_retries": 10,
-                "quiet": True,
-                "no_warnings": True,
-                "progress_hooks": [progress_hook],
             }
-            if ffmpeg_bin:
-                ydl_opts["ffmpeg_location"] = os.path.dirname(ffmpeg_bin)
-
-            try:
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    ydl.download([url])
-
-                # Check if mp3 file exists
-                if os.path.exists(output_path):
-                    return True
-                parent = os.path.dirname(output_path)
-                bname = os.path.basename(out_base)
-                for f in os.listdir(parent):
-                    if f.startswith(bname) and f.endswith(".mp3"):
-                        real = os.path.join(parent, f)
-                        if real != output_path:
-                            os.rename(real, output_path)
-                        return True
-                return False
-            except Exception as e:
-                print(f"[VideoExtractor] Audio MP3 download failed: {e}")
-                return False
+            expected_exts = ("mp3",)
 
         # --- Case 3: Audio Only (Original M4A) ---
         elif format_selector == "audio_m4a":
-            if not output_path.endswith(".m4a"):
-                output_path = out_base + ".m4a"
-
-            ydl_opts = {
-                "format": "bestaudio[ext=m4a]/bestaudio/best",
-                "outtmpl": out_base + ".%(ext)s",
-                "concurrent_fragment_downloads": max(8, num_connections or 16),
-                "buffersize": 1024 * 1024,
-                "http_chunk_size": 10 * 1024 * 1024,
-                "retries": 10,
-                "fragment_retries": 10,
-                "quiet": True,
-                "no_warnings": True,
-                "progress_hooks": [progress_hook],
-            }
-            if ffmpeg_bin:
-                ydl_opts["ffmpeg_location"] = os.path.dirname(ffmpeg_bin)
-
-            try:
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    ydl.download([url])
-
-                if os.path.exists(output_path):
-                    return True
-                parent = os.path.dirname(output_path)
-                bname = os.path.basename(out_base)
-                for f in os.listdir(parent):
-                    if f.startswith(bname) and (f.endswith(".m4a") or f.endswith(".opus") or f.endswith(".webm")):
-                        real = os.path.join(parent, f)
-                        if real != output_path:
-                            os.rename(real, output_path)
-                        return True
-                return False
-            except Exception as e:
-                print(f"[VideoExtractor] Audio M4A download failed: {e}")
-                return False
+            ydl_opts = {**common_opts, "format": "bestaudio[ext=m4a]/bestaudio/best"}
+            # Keep the real container if no m4a stream exists (renaming .opus to .m4a mislabels it)
+            expected_exts = AUDIO_EXTS
 
         # --- Case 4: Video Stream with Selected Resolution ---
         else:
-            if not output_path.endswith(".mp4"):
-                output_path = out_base + ".mp4"
-
             ydl_opts = {
+                **common_opts,
                 "format": format_selector,
-                "outtmpl": out_base + ".%(ext)s",
                 "merge_output_format": "mp4",
-                "concurrent_fragment_downloads": max(8, num_connections or 16),
-                "buffersize": 1024 * 1024,
-                "http_chunk_size": 10 * 1024 * 1024,
-                "retries": 10,
-                "fragment_retries": 10,
-                "quiet": True,
-                "no_warnings": True,
-                "progress_hooks": [progress_hook],
                 "http_headers": {
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                     "Accept-Language": "en-US,en;q=0.9,ar;q=0.8",
+                    **(http_headers or {}),
                 },
             }
-            if ffmpeg_bin:
-                ydl_opts["ffmpeg_location"] = os.path.dirname(ffmpeg_bin)
+            expected_exts = VIDEO_EXTS
 
-            try:
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    ydl.download([url])
-
-                # Ensure final output file exists with desired name
-                if not os.path.exists(output_path):
-                    parent = os.path.dirname(output_path)
-                    base_name = os.path.basename(out_base)
-                    for f in os.listdir(parent):
-                        if f.startswith(base_name) and not f.endswith(".part"):
-                            real_file = os.path.join(parent, f)
-                            os.rename(real_file, output_path)
-                            break
-
-                return os.path.exists(output_path)
-            except Exception as e:
-                print(f"[VideoExtractor] Download failed: {e}")
-                return False
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([url])
+            return cls._locate_output(out_base, expected_exts)
+        except Exception as e:
+            print(f"[VideoExtractor] Download failed ({format_selector}): {e}")
+            return None

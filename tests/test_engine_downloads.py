@@ -85,6 +85,7 @@ class _TestServer(ThreadingHTTPServer):
         self.mode = mode
         self.slow_below = slow_below
         self.flaky_left = 1
+        self.failures_served = 0
         self._lock = threading.Lock()
 
     def handle_error(self, request, client_address):
@@ -92,14 +93,17 @@ class _TestServer(ThreadingHTTPServer):
 
     def failure_for(self, start: int):
         with self._lock:
+            status = None
             if self.mode == "always_500":
-                return 500
-            if self.mode == "range_403" and start > 0:
-                return 403
-            if self.mode == "flaky" and start > 0 and self.flaky_left:
+                status = 500
+            elif self.mode == "range_403" and start > 0:
+                status = 403
+            elif self.mode == "flaky" and start > 0 and self.flaky_left:
                 self.flaky_left -= 1
-                return 500
-        return None
+                status = 503
+            if status:
+                self.failures_served += 1
+            return status
 
 
 class EngineDownloadTestCase(unittest.IsolatedAsyncioTestCase):
@@ -178,6 +182,17 @@ class TestFailureHandling(EngineDownloadTestCase):
         task = await self.download(self.serve("range_403"))
         self.assertEqual(task.status, TaskStatus.ERROR)
         self.assertIn("HTTP 403", task.error_message)
+
+    async def test_expired_link_gives_up_quickly(self):
+        task = await self.download(self.serve("range_403"), connections=2)
+        self.assertEqual(task.status, TaskStatus.ERROR)
+        self.assertLessEqual(self.server.failures_served, 3, "a 403 should not be retried a dozen times")
+
+    async def test_long_outage_is_ridden_out(self):
+        url = self.serve("flaky")
+        self.server.flaky_left = 8  # more consecutive failures than the old limit of 5
+        task = await self.download(url, connections=2)
+        self.assertDownloadedIntact(task)
 
     async def test_single_stream_failure_reports_error(self):
         task = await self.download(self.serve("always_500"))

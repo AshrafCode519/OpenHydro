@@ -15,7 +15,7 @@ try:
     import pystray
     from pystray import MenuItem as item
     PYSTRAY_AVAILABLE = True
-except ImportError:
+except Exception:  # Not only ImportError: on headless Linux pystray fails to find a display
     PYSTRAY_AVAILABLE = False
 
 

@@ -84,7 +84,16 @@ class StorageManager:
             return extract_dir
         elif tarfile.is_tarfile(archive_path):
             with tarfile.open(archive_path, 'r:*') as tf:
-                tf.extractall(extract_dir)
+                if hasattr(tarfile, "data_filter"):
+                    # Refuses absolute paths, "../" escapes, links pointing outside and device files
+                    tf.extractall(extract_dir, filter="data")
+                else:
+                    base = os.path.realpath(extract_dir)
+                    for member in tf.getmembers():
+                        target = os.path.realpath(os.path.join(extract_dir, member.name))
+                        if os.path.commonpath([base, target]) != base or member.issym() or member.islnk() or member.isdev():
+                            raise ValueError(f"عنصر غير آمن داخل الأرشيف: {member.name}")
+                    tf.extractall(extract_dir)
             return extract_dir
         else:
             raise ValueError("صيغة الأرشيف غير مدعومة حالياً (يدعم .zip و .tar و .tar.gz)")

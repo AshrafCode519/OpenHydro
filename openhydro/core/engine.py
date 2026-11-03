@@ -25,6 +25,13 @@ from .extractor import VideoExtractor
 from .torrent import TorrentManager
 from .security import sanitize_filename, get_app_data_dir
 
+# Minimum seconds between two progress events for the same task (status changes are immediate)
+PROGRESS_EVENT_INTERVAL = 0.25
+
+# Retrying these will not help (expired/forbidden link, missing file): give up after one more try
+PERMANENT_HTTP_ERRORS = {400, 401, 403, 404, 405, 410, 416, 451}
+PERMANENT_ERROR_RETRIES = 1
+
 
 class DownloadEngine:
     def __init__(self, download_dir: Optional[str] = None, store_path: Optional[str] = None):
@@ -34,6 +41,7 @@ class DownloadEngine:
         self.rate_limiter = RateLimiter(0)  # Unlimited by default
         self._running_loops: Dict[str, asyncio.Task] = {}
         self._listeners: List[Callable] = []
+        self._last_progress_event: Dict[str, float] = {}
         self._lock = threading.Lock()
         self.scheduler = SmartScheduler(self)
         self.torrent_manager = TorrentManager(self.download_dir)
@@ -87,6 +95,13 @@ class DownloadEngine:
         self._listeners.append(callback)
 
     def _notify(self, event_type: str, task: Any):
+        if event_type == "task_progress" and isinstance(task, DownloadTask):
+            # Every worker reports progress; with 32 connections that was dozens of full task
+            # snapshots per second. Status changes (updated/completed/error) are never throttled.
+            now = time.monotonic()
+            if now - self._last_progress_event.get(task.id, 0.0) < PROGRESS_EVENT_INTERVAL:
+                return
+            self._last_progress_event[task.id] = now
         payload = task.to_dict() if hasattr(task, "to_dict") else task
         for listener in self._listeners:
             try:
@@ -505,8 +520,11 @@ class DownloadEngine:
             task.status = TaskStatus.ERROR
             task.speed = 0.0
             task.eta_seconds = None
-            task.error_message = f"فشل التحميل بعد {MAX_RETRIES} محاولات ({reason or 'خطأ في الاتصال'})"
+            task.error_message = f"فشل التحميل ({reason or 'خطأ في الاتصال'})"
             self._notify("task_error", task)
+
+        def retries_allowed(worker: ChunkWorker) -> int:
+            return PERMANENT_ERROR_RETRIES if worker.last_status in PERMANENT_HTTP_ERRORS else MAX_RETRIES
 
         # Single stream mode for unknown size or non-range servers (restarts from byte 0 on each attempt)
         async def single_stream_download():
@@ -517,6 +535,8 @@ class DownloadEngine:
 
             for attempt in range(MAX_RETRIES + 1):
                 if attempt:
+                    if attempt > retries_allowed(worker):
+                        break
                     await asyncio.sleep(min(RETRY_BACKOFF_BASE ** attempt, 5.0))
                 if task.status != TaskStatus.DOWNLOADING:
                     return
@@ -558,10 +578,11 @@ class DownloadEngine:
                 if success or task.status != TaskStatus.DOWNLOADING:
                     continue
 
-                # Retry the same chunk with backoff; give up on it only after MAX_RETRIES failures
+                # Retry the same chunk with backoff: network drops get MAX_RETRIES attempts,
+                # an expired or forbidden link (4xx) gives up quickly so the user can refresh it
                 failures = chunk_failures.get(target_chunk.id, 0) + 1
                 chunk_failures[target_chunk.id] = failures
-                if failures > MAX_RETRIES:
+                if failures > retries_allowed(worker):
                     target_chunk.status = "failed"
                     give_up_reason = worker.last_error
                     continue

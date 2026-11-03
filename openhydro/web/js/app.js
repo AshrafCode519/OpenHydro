@@ -197,8 +197,20 @@ function handleWebSocketMessage(msg) {
     handleShutdownNotification(data?.countdown || 60);
   }
 
-  updateGlobalStats();
-  renderTasks();
+  scheduleRender();
+}
+
+// Coalesce bursts of messages into one list rebuild per animation frame
+// (frames also pause while the window is hidden in the tray)
+let renderScheduled = false;
+function scheduleRender() {
+  if (renderScheduled) return;
+  renderScheduled = true;
+  requestAnimationFrame(() => {
+    renderScheduled = false;
+    updateGlobalStats();
+    renderTasks();
+  });
 }
 
 // Global Stats & Counters

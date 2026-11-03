@@ -902,9 +902,18 @@ class DownloadEngine:
                 await self.torrent_manager.resume(task.torrent_gid)
 
             # Polling loop
+            unreachable_since: Optional[float] = None
             while task.status == TaskStatus.DOWNLOADING:
                 await asyncio.sleep(1.0)
-                status = await self.torrent_manager.tell_status(task.torrent_gid)
+                try:
+                    status = await self.torrent_manager.tell_status(task.torrent_gid)
+                    unreachable_since = None
+                except Exception:
+                    # aria2 busy or restarting: keep waiting, and only give up after half a minute
+                    unreachable_since = unreachable_since or time.time()
+                    if time.time() - unreachable_since > 30:
+                        raise
+                    continue
                 if not status:
                     # GID was lost from aria2c (e.g. app restarted) -> re-register download
                     try:

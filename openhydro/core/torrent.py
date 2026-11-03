@@ -15,7 +15,7 @@ from typing import Dict, Optional, List, Any
 from urllib.parse import urlparse, parse_qs, unquote
 import httpx
 
-from .security import load_or_create_secret
+from .security import load_or_create_secret, get_app_data_dir
 
 
 class TorrentManager:
@@ -28,6 +28,8 @@ class TorrentManager:
         self._http_client: Optional[httpx.AsyncClient] = None
         self._lock = asyncio.Lock()
         self._legacy_checked = False
+        self._log = None
+        self.last_start_error: Optional[str] = None  # shown to the user when torrents cannot start
         self.binary_path = self._locate_binary()
         atexit.register(self.stop)
 
@@ -98,7 +100,13 @@ class TorrentManager:
         if state:
             return True
         if state is False:
+            self.last_start_error = f"المنفذ {self.rpc_port} مستخدم بواسطة نسخة aria2c أخرى رفضت كلمة السر"
             print(f"[TorrentManager] Port {self.rpc_port} is held by another aria2c instance that rejected our secret.")
+            return False
+        if self._proc and self._proc.poll() is None:
+            # Our daemon is alive but slow to answer: starting a second one would fail on the
+            # busy port and replace the handle, leaving the first daemon running forever
+            self.last_start_error = "aria2c مشغول ولا يستجيب حالياً"
             return False
 
         # Spawn aria2c in background
@@ -107,22 +115,52 @@ class TorrentManager:
             if sys.platform.startswith("win"):
                 flags = subprocess.CREATE_NO_WINDOW
 
+            # aria2c's own output goes to a log file: it is the only place a startup error
+            # (e.g. a rejected option) shows up
+            self._close_log()
+            self._log = open(os.path.join(get_app_data_dir(), "aria2c.log"), "w", encoding="utf-8", errors="replace")
             self._proc = subprocess.Popen(
                 self._build_command(),
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stdout=self._log,
+                stderr=subprocess.STDOUT,
                 creationflags=flags
             )
 
-            # Wait briefly for RPC to be responsive
-            for _ in range(15):
+            # Wait for RPC to be responsive (the first launch can be slowed by antivirus scanning)
+            for _ in range(50):
                 await asyncio.sleep(0.2)
                 if await self._ping():
+                    self.last_start_error = None
                     return True
+                if self._proc.poll() is not None:
+                    break
+            self.last_start_error = self._startup_failure()
+            print(f"[TorrentManager] aria2c did not start: {self.last_start_error}")
             return False
         except Exception as e:
+            self.last_start_error = str(e)
             print(f"[TorrentManager] Failed to launch aria2c: {e}")
             return False
+
+    def _startup_failure(self) -> str:
+        """Reason aria2c is not answering, from its exit code and the last line it logged."""
+        code = self._proc.poll() if self._proc else None
+        last_line = ""
+        try:
+            self._log.flush()
+            with open(self._log.name, encoding="utf-8", errors="replace") as f:
+                lines = [line.strip() for line in f if line.strip()]
+            last_line = lines[-1] if lines else ""
+        except Exception:
+            pass
+        if code is None:
+            return f"aria2c لا يستجيب على المنفذ {self.rpc_port}"
+        return f"aria2c توقف (رمز {code}): {last_line}" if last_line else f"aria2c توقف (رمز {code})"
+
+    def _close_log(self):
+        log = getattr(self, "_log", None)
+        if log and not log.closed:
+            log.close()
 
     def _build_command(self) -> List[str]:
         return [
@@ -135,9 +173,15 @@ class TorrentManager:
             "--max-connection-per-server=16",
             "--split=16",
             "--min-split-size=1M",
-            "--bt-enable-dht=true",
+            "--enable-dht=true",  # "--bt-enable-dht" is not an aria2 option: aria2c exited on startup
             "--enable-dht6=false",
             "--dht-listen-port=6881",
+            # Without a saved routing table DHT finds nobody: bootstrap it and keep it between runs
+            "--dht-entry-point=dht.transmissionbt.com:6881",
+            "--dht-file-path=" + os.path.join(get_app_data_dir(), "dht.dat"),
+            # The default "prealloc" writes the whole file (GBs of zeros) before downloading anything;
+            # falloc reserves the space instantly on NTFS/ext4
+            "--file-allocation=falloc",
             "--bt-max-peers=100",
             "--seed-time=0",
             "--auto-file-renaming=false",
@@ -174,7 +218,8 @@ class TorrentManager:
             return False
 
     async def _call(self, method: str, params: List[Any] = None) -> Any:
-        await self.ensure_running()
+        if not await self.ensure_running():
+            raise RuntimeError(f"تعذر تشغيل محرك التورنت: {self.last_start_error or 'aria2c غير متاح'}")
         if not self._http_client:
             self._http_client = httpx.AsyncClient(timeout=4.0)
 
@@ -208,11 +253,16 @@ class TorrentManager:
         return gid
 
     async def tell_status(self, gid: str) -> Optional[Dict[str, Any]]:
-        """Retrieves real-time status of a torrent download."""
+        """
+        Real-time status of a torrent download. None means aria2 does not know the GID (it was
+        restarted); an unreachable or busy aria2 raises instead, so callers do not re-add the torrent.
+        """
         try:
             return await self._call("aria2.tellStatus", [gid])
-        except Exception:
-            return None
+        except RuntimeError as e:
+            if "not found" in str(e):
+                return None
+            raise
 
     async def pause(self, gid: str) -> bool:
         try:
@@ -239,10 +289,18 @@ class TorrentManager:
         """Terminates background process cleanly."""
         if self._proc and self._proc.poll() is None:
             try:
-                self._proc.terminate()
+                # Graceful exit first, so aria2 saves its DHT routing table for the next start
+                httpx.post(self.rpc_url, json=self._payload("aria2.forceShutdown"), timeout=2.0)
+                self._proc.wait(timeout=3)
             except Exception:
                 pass
+            if self._proc.poll() is None:
+                try:
+                    self._proc.terminate()
+                except Exception:
+                    pass
             self._proc = None
+        self._close_log()
         if self._http_client:
             try:
                 asyncio.create_task(self._http_client.aclose())

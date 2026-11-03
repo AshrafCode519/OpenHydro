@@ -7,6 +7,7 @@ import os
 import shutil
 import tempfile
 import unittest
+from unittest import mock
 
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
@@ -76,6 +77,38 @@ class TestTorrentRpcSecret(unittest.TestCase):
             payload = mgr._payload("aria2.tellStatus", ["gid1"])
             self.assertEqual(payload["params"], ["token:s3cret", "gid1"])
             self.assertEqual(mgr._payload("aria2.getVersion", authenticated=False)["params"], [])
+
+
+class TestTorrentDaemonStarts(unittest.IsolatedAsyncioTestCase):
+    """Launches the real aria2c: checking the option list alone let "--bt-enable-dht" slip through."""
+
+    async def asyncSetUp(self):
+        download_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, download_dir, ignore_errors=True)
+        self.mgr = TorrentManager(download_dir, rpc_port=16899, rpc_secret="test-secret")
+        if not self.mgr.is_available():
+            self.skipTest("aria2c is not available on this machine")
+
+    async def asyncTearDown(self):
+        proc = self.mgr._proc
+        self.mgr.stop()
+        if proc:
+            proc.wait(timeout=10)
+
+    async def test_bundled_aria2c_accepts_our_options(self):
+        self.assertTrue(await self.mgr.ensure_running(), self.mgr.last_start_error)
+        self.assertIn("version", await self.mgr._call("aria2.getVersion"))
+        self.assertFalse(await self.mgr._ping(authenticated=False), "aria2 answered without the secret")
+
+    async def test_startup_failure_reports_the_reason(self):
+        build = self.mgr._build_command
+        with mock.patch.object(self.mgr, "_build_command", lambda: build() + ["--no-such-option=1"]):
+            self.assertFalse(await self.mgr.ensure_running())
+        self.assertIn("no-such-option", self.mgr.last_start_error)
+        with self.assertRaises(RuntimeError) as ctx:
+            with mock.patch.object(self.mgr, "_build_command", lambda: build() + ["--no-such-option=1"]):
+                await self.mgr._call("aria2.getVersion")
+        self.assertIn("no-such-option", str(ctx.exception))
 
 
 class TestApiAccessGuard(unittest.TestCase):

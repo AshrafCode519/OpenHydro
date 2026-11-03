@@ -468,6 +468,8 @@ class VideoExtractor:
             "fragment_retries": 10,
             "quiet": True,
             "no_warnings": True,
+            # Progress reaches the UI through the hook; the console bar only bloated openhydro.log
+            "noprogress": True,
             "progress_hooks": [progress_hook],
         }
         if ffmpeg_bin:

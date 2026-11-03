@@ -18,7 +18,7 @@ from .task import DownloadTask, Chunk, TaskStatus
 from .segmenter import DynamicSegmenter
 from .storage import StorageManager, TaskStore
 from .limiter import RateLimiter
-from .worker import ChunkWorker, DEFAULT_USER_AGENT, MAX_RETRIES, RETRY_BACKOFF_BASE, shared_ssl_context
+from .worker import ChunkWorker, DEFAULT_USER_AGENT, MAX_RETRIES, RETRY_BACKOFF_BASE, shared_ssl_context, shared_ssl_context_async
 from .hls import HLSStreamParser, HLSDownloader
 from .scheduler import SmartScheduler
 from .extractor import VideoExtractor
@@ -46,6 +46,10 @@ class DownloadEngine:
         self.scheduler = SmartScheduler(self)
         self.torrent_manager = TorrentManager(self.download_dir)
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+
+        # Load the CA bundle now, off the event loop: on a busy machine it takes seconds and
+        # would otherwise delay the first download (or probe) after every start
+        threading.Thread(target=shared_ssl_context, name="ssl-warmup", daemon=True).start()
 
         # Restore saved tasks from disk
         self._restore_persisted_tasks()
@@ -239,7 +243,7 @@ class DownloadEngine:
             timeout = httpx.Timeout(15.0, connect=10.0)
             # Same encoding the workers use, so Content-Length is the size of the raw file
             probe_headers = {"Accept-Encoding": "identity", **headers}
-            async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, verify=shared_ssl_context()) as client:
+            async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, verify=await shared_ssl_context_async()) as client:
                 # 1. Try HEAD request
                 resp = await client.head(url, headers=probe_headers)
 
@@ -889,7 +893,7 @@ class DownloadEngine:
                     if os.path.exists(task.url):
                         gid = await self.torrent_manager.add_torrent_file(task.url, save_dir=target_save_dir)
                     else:
-                        async with httpx.AsyncClient(timeout=15.0) as client:
+                        async with httpx.AsyncClient(timeout=15.0, verify=await shared_ssl_context_async()) as client:
                             r = await client.get(task.url, follow_redirects=True)
                             r.raise_for_status()
                             gid = await self.torrent_manager.add_torrent_file(r.content, save_dir=target_save_dir)

@@ -8,6 +8,7 @@ import re
 import ssl
 import time
 import asyncio
+import threading
 import certifi
 import httpx
 from typing import Optional, Callable
@@ -23,17 +24,27 @@ MAX_RETRIES = 12
 RETRY_BACKOFF_BASE = 1.5  # exponential backoff seconds
 
 _shared_ssl_context: Optional[ssl.SSLContext] = None
+_ssl_context_lock = threading.Lock()
 
 
 def shared_ssl_context() -> ssl.SSLContext:
     """
-    One TLS context for every worker client: loading the CA bundle takes ~0.3s and blocks the
-    event loop, so building it per connection stalled the whole app on each start/resume.
+    One TLS context for every HTTP client: loading the CA bundle takes ~0.3s on an idle machine
+    and 5-20s on a busy one, so building it per connection stalled the app on each start/resume.
+    The engine builds it in the background at startup (see DownloadEngine).
     """
     global _shared_ssl_context
-    if _shared_ssl_context is None:
-        _shared_ssl_context = ssl.create_default_context(cafile=certifi.where())
+    with _ssl_context_lock:
+        if _shared_ssl_context is None:
+            _shared_ssl_context = ssl.create_default_context(cafile=certifi.where())
     return _shared_ssl_context
+
+
+async def shared_ssl_context_async() -> ssl.SSLContext:
+    """The shared context, waited for off the event loop if it is still being built."""
+    if _shared_ssl_context is not None:
+        return _shared_ssl_context
+    return await asyncio.to_thread(shared_ssl_context)
 
 
 class ChunkWorker:
@@ -68,7 +79,7 @@ class ChunkWorker:
         """Lazily creates and reuses a single httpx.AsyncClient per worker for connection pooling."""
         if self._client is None or self._client.is_closed:
             timeout = httpx.Timeout(30.0, connect=10.0)
-            self._client = httpx.AsyncClient(timeout=timeout, follow_redirects=True, verify=shared_ssl_context())
+            self._client = httpx.AsyncClient(timeout=timeout, follow_redirects=True, verify=await shared_ssl_context_async())
         return self._client
 
     def _file_handle(self):

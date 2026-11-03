@@ -7,6 +7,7 @@ Provides full Video, Audio (MP3/M4A), and Subtitles/Text Transcript (SRT/TXT) ex
 import os
 import re
 import glob
+import time
 import asyncio
 from typing import Dict, List, Optional, Callable
 from urllib.parse import urlparse, parse_qs
@@ -177,24 +178,45 @@ class VideoExtractor:
             "entries": entries,
         }
 
+    # yt-dlp metadata extraction takes many seconds on YouTube. A download used to extract three
+    # times (quality menu, add, download); the result is now reused while its links stay valid.
+    _info_cache: Dict[str, tuple] = {}
+    INFO_CACHE_SECONDS = 15 * 60
+
+    @classmethod
+    def _remember_info(cls, url: str, info: Dict):
+        now = time.time()
+        cls._info_cache = {u: e for u, e in cls._info_cache.items() if now - e[0] < cls.INFO_CACHE_SECONDS}
+        cls._info_cache[url] = (now, info)
+
+    @classmethod
+    def _recent_info(cls, url: str) -> Optional[Dict]:
+        entry = cls._info_cache.get(url)
+        if entry and time.time() - entry[0] < cls.INFO_CACHE_SECONDS:
+            return entry[1]
+        return None
+
     @classmethod
     def _sync_extract(cls, url: str) -> Dict:
         import yt_dlp
 
-        ydl_opts = {
-            "quiet": True,
-            "no_warnings": True,
-            "skip_download": True,
-            "noplaylist": True,
-            "http_headers": {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept-Language": "en-US,en;q=0.9,ar;q=0.8",
-                "Sec-Fetch-Mode": "navigate",
-            },
-        }
+        info = cls._recent_info(url)
+        if info is None:
+            ydl_opts = {
+                "quiet": True,
+                "no_warnings": True,
+                "skip_download": True,
+                "noplaylist": True,
+                "http_headers": {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Accept-Language": "en-US,en;q=0.9,ar;q=0.8",
+                    "Sec-Fetch-Mode": "navigate",
+                },
+            }
 
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.sanitize_info(ydl.extract_info(url, download=False))
+            cls._remember_info(url, info)
 
         title = info.get("title", "video")
         title_sanitized = re.sub(r'[\\/*?:"<>|]', "_", title)
@@ -277,19 +299,10 @@ class VideoExtractor:
             "ext": "m4a",
         })
 
-        # 3. Check for Subtitles / Captions / Transcripts
-        has_subtitles = False
+        # 3. Subtitles / Captions / Transcripts. YouTube always gets the options (its transcript API
+        # is tried at download time); the separate availability request cost seconds for nothing.
         yt_id = cls.extract_youtube_video_id(url)
-        if yt_id:
-            try:
-                from youtube_transcript_api import YouTubeTranscriptApi
-                # Quick verification of transcript availability (raises if there is none)
-                YouTubeTranscriptApi().list(yt_id)
-                has_subtitles = True
-            except Exception:
-                has_subtitles = False
-        else:
-            has_subtitles = bool(info.get("subtitles") or info.get("automatic_captions"))
+        has_subtitles = bool(info.get("subtitles") or info.get("automatic_captions"))
 
         if has_subtitles or yt_id:
             qualities.append({
@@ -523,7 +536,17 @@ class VideoExtractor:
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([url])
+                info = cls._recent_info(url)
+                if info is None:
+                    ydl.download([url])
+                else:
+                    try:
+                        # Same path as yt-dlp's --load-info-json: formats are re-selected for this
+                        # request, but the slow page/player extraction is not repeated
+                        ydl.process_ie_result(dict(info), download=True)
+                    except yt_dlp.utils.DownloadError:
+                        cls._info_cache.pop(url, None)  # links expired: extract afresh
+                        ydl.download([url])
             return cls._locate_output(out_base, expected_exts)
         except Exception as e:
             print(f"[VideoExtractor] Download failed ({format_selector}): {e}")

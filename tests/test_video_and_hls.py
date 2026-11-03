@@ -5,6 +5,7 @@ yt-dlp and Google Drive are faked; HLS runs against a local HTTP server.
 
 import os
 import re
+import time
 import shutil
 import asyncio
 import tempfile
@@ -102,6 +103,68 @@ class TestExtractorOutput(unittest.TestCase):
 
     def test_nothing_produced_is_a_failure(self):
         self.assertIsNone(self.run_download("Clip.mp4", "bestvideo+bestaudio/best", [".f137.mp4"]))
+
+
+class CountingYoutubeDL(FakeYoutubeDL):
+    """FakeYoutubeDL that also extracts metadata and replays saved info, counting each call."""
+    calls = []
+    fail_replay = False
+
+    def extract_info(self, url, download=False):
+        CountingYoutubeDL.calls.append("extract")
+        return {"id": "abc", "title": "Clip", "formats": [{"format_id": "18", "height": 360}]}
+
+    @staticmethod
+    def sanitize_info(info, remove_private_keys=False):
+        return dict(info)
+
+    def process_ie_result(self, info, download=True):
+        CountingYoutubeDL.calls.append("replay")
+        if CountingYoutubeDL.fail_replay:
+            import yt_dlp
+            raise yt_dlp.utils.DownloadError("HTTP Error 403: Forbidden")
+        self.download([info["id"]])
+
+    def download(self, urls):
+        CountingYoutubeDL.calls.append("download")
+        super().download(urls)
+
+
+class TestExtractionIsReused(unittest.TestCase):
+    URL = "https://www.youtube.com/watch?v=abcdefghijk"
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
+        VideoExtractor._info_cache = {}
+        self.addCleanup(setattr, VideoExtractor, "_info_cache", {})
+        CountingYoutubeDL.calls, CountingYoutubeDL.fail_replay, FakeYoutubeDL.produces = [], False, [".mp4"]
+        patcher = mock.patch("yt_dlp.YoutubeDL", CountingYoutubeDL)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def download(self):
+        return VideoExtractor._sync_download(self.URL, os.path.join(self.dir, "Clip.mp4"),
+                                             "bestvideo[height<=720]+bestaudio/best", 8, None, None)
+
+    def test_quality_menu_add_and_download_extract_once(self):
+        VideoExtractor._sync_extract(self.URL)  # quality menu
+        VideoExtractor._sync_extract(self.URL)  # add_download probes again
+        self.assertIsNotNone(self.download())
+        self.assertEqual(CountingYoutubeDL.calls, ["extract", "replay", "download"])
+
+    def test_expired_links_fall_back_to_a_fresh_extraction(self):
+        VideoExtractor._sync_extract(self.URL)
+        CountingYoutubeDL.fail_replay = True
+        self.assertIsNotNone(self.download())
+        self.assertEqual(CountingYoutubeDL.calls, ["extract", "replay", "download"])
+        self.assertIsNone(VideoExtractor._recent_info(self.URL), "stale info must be dropped")
+
+    def test_cache_expires(self):
+        VideoExtractor._sync_extract(self.URL)
+        with mock.patch("openhydro.core.extractor.time.time", return_value=time.time() + 16 * 60):
+            VideoExtractor._sync_extract(self.URL)
+        self.assertEqual(CountingYoutubeDL.calls, ["extract", "extract"])
 
 
 class TestEngineUsesRealOutputPath(unittest.IsolatedAsyncioTestCase):

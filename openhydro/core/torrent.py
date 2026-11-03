@@ -16,6 +16,7 @@ from urllib.parse import urlparse, parse_qs, unquote
 import httpx
 
 from .security import load_or_create_secret, get_app_data_dir
+from .worker import shared_ssl_context_async
 
 
 class TorrentManager:
@@ -85,7 +86,7 @@ class TorrentManager:
             return False
 
         if not self._http_client:
-            self._http_client = httpx.AsyncClient(timeout=4.0)
+            self._http_client = httpx.AsyncClient(timeout=4.0, verify=await shared_ssl_context_async())
 
         # Check if already running on rpc_port
         state = await self._ping()
@@ -221,7 +222,7 @@ class TorrentManager:
         if not await self.ensure_running():
             raise RuntimeError(f"تعذر تشغيل محرك التورنت: {self.last_start_error or 'aria2c غير متاح'}")
         if not self._http_client:
-            self._http_client = httpx.AsyncClient(timeout=4.0)
+            self._http_client = httpx.AsyncClient(timeout=4.0, verify=await shared_ssl_context_async())
 
         resp = await self._http_client.post(self.rpc_url, json=self._payload(method, params))
         data = resp.json()

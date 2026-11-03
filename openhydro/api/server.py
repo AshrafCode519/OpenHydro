@@ -397,7 +397,6 @@ def create_app(engine: DownloadEngine, remote_token: Optional[str] = None) -> Fa
     @app.get("/api/tasks/{task_id}/preview_stream")
     async def preview_stream(task_id: str, request: Request):
         import mimetypes
-        from fastapi.responses import StreamingResponse
         task = engine.tasks.get(task_id)
         if not task:
             raise HTTPException(status_code=404, detail="المهمة غير موجودة")

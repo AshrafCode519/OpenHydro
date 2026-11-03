@@ -283,8 +283,8 @@ class VideoExtractor:
         if yt_id:
             try:
                 from youtube_transcript_api import YouTubeTranscriptApi
-                # Quick verification of transcript availability
-                tlist = YouTubeTranscriptApi().list(yt_id)
+                # Quick verification of transcript availability (raises if there is none)
+                YouTubeTranscriptApi().list(yt_id)
                 has_subtitles = True
             except Exception:
                 has_subtitles = False

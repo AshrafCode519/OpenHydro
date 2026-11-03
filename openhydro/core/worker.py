@@ -18,8 +18,8 @@ from .limiter import RateLimiter
 CHUNK_BUFFER_SIZE = 64 * 1024  # 64 KB read buffer
 DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 OpenHydro/1.0"
 
-# Max consecutive failures before giving up on a chunk
-MAX_RETRIES = 5
+# Max consecutive failures before giving up on a chunk (~1 minute of backoff for network drops)
+MAX_RETRIES = 12
 RETRY_BACKOFF_BASE = 1.5  # exponential backoff seconds
 
 _shared_ssl_context: Optional[ssl.SSLContext] = None
@@ -59,6 +59,8 @@ class ChunkWorker:
         self._fh = None
         # Reason of the most recent failure (shown to the user if the task finally errors out)
         self.last_error: Optional[str] = None
+        # HTTP status of that failure, None for network errors (decides whether retrying can help)
+        self.last_status: Optional[int] = None
         # Set when the server answers a Range request with data from a different offset
         self.range_ignored = False
 
@@ -121,6 +123,7 @@ class ChunkWorker:
             async with client.stream("GET", self.task.url, headers=headers) as response:
                 if response.status_code not in (206, 200):
                     self.last_error = f"HTTP {response.status_code}"
+                    self.last_status = response.status_code
                     chunk.status = "failed"
                     return False
 
@@ -180,6 +183,7 @@ class ChunkWorker:
         except Exception as e:
             print(f"[Worker-{self.worker_id}] Error in chunk {chunk.id}: {e}")
             self.last_error = str(e) or type(e).__name__
+            self.last_status = None
             chunk.status = "failed"
             chunk.speed = 0.0
             return False
@@ -219,6 +223,7 @@ class ChunkWorker:
             async with client.stream("GET", self.task.url, headers=headers) as response:
                 if response.status_code not in (200, 206):
                     self.last_error = f"HTTP {response.status_code}"
+                    self.last_status = response.status_code
                     chunk.status = "failed"
                     return False
 
@@ -259,6 +264,7 @@ class ChunkWorker:
         except Exception as e:
             print(f"[Worker-{self.worker_id}] Stream error: {e}")
             self.last_error = str(e) or type(e).__name__
+            self.last_status = None
             chunk.status = "failed"
             chunk.speed = 0.0
             return False

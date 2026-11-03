@@ -11,12 +11,11 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
-  <!-- Tailwind CSS CDN -->
-  <script src="https://cdn.tailwindcss.com"></script>
-  <!-- Lucide Icons CDN -->
-  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- Bundled, pinned libraries: the dashboard must work offline and not change under us -->
+  <script src="/static/vendor/tailwindcss-3.4.17.js"></script>
+  <script src="/static/vendor/lucide-1.67.0.min.js"></script>
   <!-- Local QR generation for the mobile remote link -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
+  <script src="/static/vendor/qrcode-generator-1.4.4.min.js"></script>
   <link rel="stylesheet" href="/static/css/style.css">
   <script>
     tailwind.config = {

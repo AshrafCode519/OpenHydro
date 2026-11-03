@@ -6,8 +6,6 @@ and right-clicking the tray icon shows 'Exit' (خروج نهائي) to completel
 """
 
 import sys
-import builtins
-builtins.sys = sys
 import os
 import time
 import socket

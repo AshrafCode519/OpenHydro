@@ -4,8 +4,11 @@ Handles HTTP Range requests, direct disk writes, and dynamic chunk handoff.
 Uses os.pwrite-equivalent (seek+write under lock) for thread-safe random-access I/O.
 """
 
+import re
+import ssl
 import time
 import asyncio
+import certifi
 import httpx
 from typing import Optional, Callable
 from .task import Chunk, DownloadTask, TaskStatus
@@ -18,6 +21,19 @@ DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.
 # Max consecutive failures before giving up on a chunk
 MAX_RETRIES = 5
 RETRY_BACKOFF_BASE = 1.5  # exponential backoff seconds
+
+_shared_ssl_context: Optional[ssl.SSLContext] = None
+
+
+def shared_ssl_context() -> ssl.SSLContext:
+    """
+    One TLS context for every worker client: loading the CA bundle takes ~0.3s and blocks the
+    event loop, so building it per connection stalled the whole app on each start/resume.
+    """
+    global _shared_ssl_context
+    if _shared_ssl_context is None:
+        _shared_ssl_context = ssl.create_default_context(cafile=certifi.where())
+    return _shared_ssl_context
 
 
 class ChunkWorker:
@@ -38,16 +54,36 @@ class ChunkWorker:
         self.on_chunk_progress = on_chunk_progress
         # Persistent HTTP client for connection reuse (Keep-Alive / TLS session reuse)
         self._client: Optional[httpx.AsyncClient] = None
+        # Per-worker handle on the .part file, opened once instead of per 64 KB block
+        # (each open is costly, especially on Windows with real-time antivirus scanning)
+        self._fh = None
+        # Reason of the most recent failure (shown to the user if the task finally errors out)
+        self.last_error: Optional[str] = None
+        # Set when the server answers a Range request with data from a different offset
+        self.range_ignored = False
 
     async def _get_client(self) -> httpx.AsyncClient:
         """Lazily creates and reuses a single httpx.AsyncClient per worker for connection pooling."""
         if self._client is None or self._client.is_closed:
             timeout = httpx.Timeout(30.0, connect=10.0)
-            self._client = httpx.AsyncClient(timeout=timeout, follow_redirects=True)
+            self._client = httpx.AsyncClient(timeout=timeout, follow_redirects=True, verify=shared_ssl_context())
         return self._client
 
+    def _file_handle(self):
+        if self._fh is None or self._fh.closed:
+            # Unbuffered: every write lands immediately, nothing pending to flush out of order
+            self._fh = open(self.file_path, "r+b", buffering=0)
+        return self._fh
+
+    def close_file(self):
+        """Releases the .part file handle (required before the file can be renamed on Windows)."""
+        if self._fh and not self._fh.closed:
+            self._fh.close()
+        self._fh = None
+
     async def close(self):
-        """Closes the persistent HTTP client."""
+        """Closes the .part file handle and the persistent HTTP client."""
+        self.close_file()
         if self._client and not self._client.is_closed:
             await self._client.aclose()
             self._client = None
@@ -75,6 +111,7 @@ class ChunkWorker:
         if self.task.referrer:
             headers["Referer"] = self.task.referrer
 
+        requested_start = chunk.current_byte
         last_speed_time = time.time()
         bytes_since_last_calc = 0
 
@@ -82,8 +119,16 @@ class ChunkWorker:
             client = await self._get_client()
 
             async with client.stream("GET", self.task.url, headers=headers) as response:
-                # 206 Partial Content or 200 OK (if single stream)
                 if response.status_code not in (206, 200):
+                    self.last_error = f"HTTP {response.status_code}"
+                    chunk.status = "failed"
+                    return False
+
+                # A 200 for a non-zero offset (or a 206 starting elsewhere) means the server ignored
+                # our Range: the body is not this chunk's data and writing it here would corrupt the file
+                if not self._response_starts_at(response, requested_start):
+                    self.range_ignored = True
+                    self.last_error = "السيرفر لا يدعم التحميل المجزأ (Range)"
                     chunk.status = "failed"
                     return False
 
@@ -107,9 +152,9 @@ class ChunkWorker:
                     # This avoids the seek+write race condition of a shared handle.
                     offset = chunk.current_byte
                     async with self.file_lock:
-                        with open(self.file_path, "r+b") as fh:
-                            fh.seek(offset)
-                            fh.write(data)
+                        fh = self._file_handle()
+                        fh.seek(offset)
+                        fh.write(data)
 
                     chunk.current_byte += len(data)
                     bytes_since_last_calc += len(data)
@@ -134,9 +179,18 @@ class ChunkWorker:
 
         except Exception as e:
             print(f"[Worker-{self.worker_id}] Error in chunk {chunk.id}: {e}")
+            self.last_error = str(e) or type(e).__name__
             chunk.status = "failed"
             chunk.speed = 0.0
             return False
+
+    @staticmethod
+    def _response_starts_at(response: httpx.Response, offset: int) -> bool:
+        """True if the response body begins at `offset` of the remote file."""
+        if response.status_code == 200:
+            return offset == 0
+        match = re.match(r"bytes\s+(\d+)-", response.headers.get("content-range", ""))
+        return bool(match) and int(match.group(1)) == offset
 
     async def run_single_stream(self, chunk: Chunk) -> bool:
         """
@@ -145,9 +199,12 @@ class ChunkWorker:
         """
         chunk.status = "downloading"
         chunk.active_worker_id = self.worker_id
+        # The file is rewritten from scratch ("wb"), so progress restarts with it
+        chunk.current_byte = chunk.start_byte
 
         headers = {
             "User-Agent": DEFAULT_USER_AGENT,
+            "Accept-Encoding": "identity",  # Exact bytes: no transparent gzip decoding of e.g. .tar.gz
             **self.task.custom_headers,
         }
         if self.task.referrer:
@@ -161,6 +218,7 @@ class ChunkWorker:
 
             async with client.stream("GET", self.task.url, headers=headers) as response:
                 if response.status_code not in (200, 206):
+                    self.last_error = f"HTTP {response.status_code}"
                     chunk.status = "failed"
                     return False
 
@@ -200,6 +258,7 @@ class ChunkWorker:
 
         except Exception as e:
             print(f"[Worker-{self.worker_id}] Stream error: {e}")
+            self.last_error = str(e) or type(e).__name__
             chunk.status = "failed"
             chunk.speed = 0.0
             return False

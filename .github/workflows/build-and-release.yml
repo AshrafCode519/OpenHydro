@@ -31,6 +31,13 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
+      - name: Lint (undefined names) and Run Tests
+        shell: bash
+        run: |
+          pip install ruff
+          ruff check --select F821,F822,F823 run.py openhydro tests
+          python -m unittest discover -s tests -v
+
       - name: Build Executable with PyInstaller
         run: |
           pyinstaller --clean --noconfirm openhydro.spec

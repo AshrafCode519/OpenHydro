@@ -1,0 +1,3 @@
+# Built by `npm run build:css` from the classes used in openhydro/web: review those, not this file.
+# CI rebuilds it and fails when the committed copy is out of date.
+openhydro/web/css/tailwind.css linguist-generated=true -diff eol=lf

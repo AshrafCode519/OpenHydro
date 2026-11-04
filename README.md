@@ -101,6 +101,15 @@ pip install -r requirements.txt
 
 # تشغيل التطبيق
 python run.py
+
+# الاختبارات (اختبارات الواجهة تحتاج Edge أو Chrome، وتُتخطى بدونهما)
+python -m unittest discover -s tests
+```
+
+**تعديل الواجهة:** التنسيقات مبنية مسبقاً في `openhydro/web/css/tailwind.css`، فتشغيل البرنامج لا يحتاج Node.js. لو أضفت أو غيّرت كلاسات Tailwind في `index.html` أو ملفات `js`، أعد بناء الملف وارفعه مع تعديلك (الـ CI يرفض الملف القديم):
+```bash
+npm install
+npm run build:css    # أو npm run watch:css أثناء التعديل
 ```
 
 ---

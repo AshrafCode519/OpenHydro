@@ -12,29 +12,12 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
   <!-- Bundled, pinned libraries: the dashboard must work offline and not change under us -->
-  <script src="/static/vendor/tailwindcss-3.4.17.js"></script>
   <script src="/static/vendor/lucide-1.67.0.min.js"></script>
   <!-- Local QR generation for the mobile remote link -->
   <script src="/static/vendor/qrcode-generator-1.4.4.min.js"></script>
   <link rel="stylesheet" href="/static/css/style.css">
-  <script>
-    tailwind.config = {
-      darkMode: 'class',
-      theme: {
-        extend: {
-          colors: {
-            hydro: {
-              50: '#ecfeff',
-              400: '#22d3ee',
-              500: '#06b6d4',
-              600: '#0891b2',
-              900: '#164e63',
-            }
-          }
-        }
-      }
-    }
-  </script>
+  <!-- Built by `npm run build:css` (tailwind.config.js). After style.css: Tailwind's classes win, as before -->
+  <link rel="stylesheet" href="/static/css/tailwind.css">
 </head>
 <body class="bg-[#0b0f19] text-gray-100 min-h-screen flex flex-col overflow-hidden">
   <div class="bg-mesh"></div>
@@ -74,6 +57,12 @@
       <button onclick="openPlaylistModal()" title="تحميل قائمة تشغيل كاملة أو مجلد Google Drive (Playlists & Google Drive Folders)" class="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-medium shadow-lg shadow-purple-500/25 transition-all hover:scale-105 active:scale-95 text-xs">
         <i data-lucide="folder-down" class="w-4 h-4"></i>
         <span>تحميل Playlist / Drive</span>
+      </button>
+
+      <!-- Settings Button -->
+      <button onclick="openSettingsModal()" title="الإعدادات" class="flex items-center gap-2 px-3 py-2 rounded-xl glass-panel glass-panel-hover text-xs text-gray-300">
+        <i data-lucide="settings" class="w-4 h-4 text-cyan-400"></i>
+        <span>الإعدادات</span>
       </button>
 
       <!-- Scheduler & Queues Button -->
@@ -314,10 +303,11 @@
           <div>
             <label class="block text-xs font-semibold text-gray-300 mb-1">عدد مسارات التحميل بالتوازي:</label>
             <select id="modal-connections-select" class="w-full px-3 py-2 rounded-xl bg-slate-900 border border-cyan-500/40 text-sm focus:outline-none focus:border-cyan-400 text-cyan-300 font-medium">
+              <option value="1">1 مسار</option>
               <option value="4">4 مسارات</option>
-              <option value="8">8 مسارات</option>
+              <option value="8" selected>8 مسارات</option>
               <option value="16">16 مسار (فائق السرعة)</option>
-              <option value="32" selected>32 مسار (أقصى سحب للنطاق الترددي - Maximum Turbo 🚀)</option>
+              <option value="32">32 مسار (أقصى سحب للنطاق الترددي - Maximum Turbo 🚀)</option>
             </select>
           </div>
 
@@ -462,6 +452,86 @@
   </div>
 
   <!-- Smart Scheduler & Queues Modal -->
+  <!-- Settings Modal -->
+  <div id="settings-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center hidden">
+    <div class="glass-panel w-full max-w-lg rounded-2xl p-6 border border-white/10 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between border-b border-white/10 pb-3">
+        <div class="flex items-center gap-2 text-cyan-400 font-semibold">
+          <i data-lucide="settings" class="w-5 h-5"></i>
+          <span>الإعدادات</span>
+        </div>
+        <button onclick="closeSettingsModal()" class="text-gray-400 hover:text-white">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <div class="space-y-4 text-xs">
+        <div>
+          <label class="block font-semibold text-gray-300 mb-1">مجلد حفظ التنزيلات:</label>
+          <input type="text" id="set-download-dir" dir="ltr" class="w-full px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-sm focus:outline-none focus:border-cyan-500 text-white">
+          <p class="text-[10px] text-gray-500 mt-1">اتركه فارغاً لاستخدام مجلد التنزيلات (Downloads). ينطبق على التنزيلات الجديدة فقط.</p>
+        </div>
+
+        <div>
+          <label class="block font-semibold text-gray-300 mb-1">عدد الاتصالات الافتراضي لكل تنزيل:</label>
+          <select id="set-default-connections" class="w-full px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-sm focus:outline-none focus:border-cyan-500">
+            <option value="1">1 (للسيرفرات التي ترفض التحميل المتعدد)</option>
+            <option value="4">4 اتصالات</option>
+            <option value="8">8 اتصالات (موصى به)</option>
+            <option value="16">16 اتصال</option>
+            <option value="32">32 اتصال (أقصى سرعة)</option>
+          </select>
+        </div>
+
+        <label class="p-3 rounded-xl bg-white/5 border border-white/10 flex items-center justify-between cursor-pointer">
+          <div>
+            <p class="font-semibold text-gray-200">استكمال التنزيلات تلقائياً</p>
+            <p class="text-[10px] text-gray-400">التنزيلات التي توقفت بسبب إغلاق البرنامج تكمل عند فتحه من جديد.</p>
+          </div>
+          <input type="checkbox" id="set-auto-resume" class="w-4 h-4 accent-cyan-500 rounded cursor-pointer">
+        </label>
+
+        <label class="p-3 rounded-xl bg-white/5 border border-white/10 flex items-center justify-between cursor-pointer">
+          <div>
+            <p class="font-semibold text-gray-200">إشعار عند اكتمال التنزيل</p>
+            <p class="text-[10px] text-gray-400">رسالة بجوار الساعة عند انتهاء كل تنزيل.</p>
+          </div>
+          <input type="checkbox" id="set-notify" class="w-4 h-4 accent-cyan-500 rounded cursor-pointer">
+        </label>
+
+        <label class="p-3 rounded-xl bg-white/5 border border-white/10 flex items-center justify-between cursor-pointer">
+          <div>
+            <p class="font-semibold text-gray-200">مراقبة الحافظة</p>
+            <p class="text-[10px] text-gray-400">عند نسخ رابط ملف (برنامج، فيديو، ملف مضغوط...) أو رابط ماجنت يعرض البرنامج تنزيله. لا يبدأ أي تنزيل بدون موافقتك.</p>
+          </div>
+          <input type="checkbox" id="set-clipboard" class="w-4 h-4 accent-cyan-500 rounded cursor-pointer">
+        </label>
+
+        <label class="p-3 rounded-xl bg-white/5 border border-white/10 flex items-center justify-between cursor-pointer">
+          <div>
+            <p class="font-semibold text-gray-200">التشغيل مع ويندوز</p>
+            <p class="text-[10px] text-gray-400">يبدأ البرنامج في الخلفية بجوار الساعة عند تسجيل الدخول.</p>
+            <p id="set-autostart-note" class="text-[10px] text-amber-400 hidden">متاح في النسخة المثبتة فقط.</p>
+          </div>
+          <input type="checkbox" id="set-autostart" class="w-4 h-4 accent-cyan-500 rounded cursor-pointer">
+        </label>
+
+        <label class="p-3 rounded-xl bg-amber-950/20 border border-amber-500/20 flex items-center justify-between cursor-pointer">
+          <div>
+            <p class="font-semibold text-gray-200">التحكم من الموبايل</p>
+            <p class="text-[10px] text-gray-400">يسمح للأجهزة على نفس الشبكة بالتحكم عبر رمز QR. عند إيقافه لا يصل للبرنامج إلا هذا الجهاز.</p>
+          </div>
+          <input type="checkbox" id="set-remote" class="w-4 h-4 accent-amber-500 rounded cursor-pointer">
+        </label>
+      </div>
+
+      <div class="flex justify-end gap-3 pt-3 border-t border-white/10">
+        <button onclick="closeSettingsModal()" class="px-4 py-2 rounded-xl text-sm text-gray-400 hover:text-white hover:bg-white/5">إلغاء</button>
+        <button onclick="saveSettings()" class="px-5 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-medium text-sm shadow-lg shadow-cyan-500/20">حفظ الإعدادات</button>
+      </div>
+    </div>
+  </div>
+
   <div id="scheduler-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center hidden">
     <div class="glass-panel w-full max-w-lg rounded-2xl p-6 border border-white/10 shadow-2xl space-y-4">
       <div class="flex items-center justify-between border-b border-white/10 pb-3">
@@ -601,6 +671,21 @@
 
   <!-- Toast Container -->
   <div id="openhydro-toast-container"></div>
+
+  <!-- Clipboard monitoring: a download link copied anywhere, waiting for the user -->
+  <div id="clipboard-offer" class="fixed bottom-5 left-5 z-40 w-80 max-w-[calc(100vw-2.5rem)] p-4 rounded-2xl bg-slate-900/95 border border-cyan-500/30 shadow-2xl shadow-cyan-500/10 hidden">
+    <div class="flex items-start gap-3">
+      <div class="p-2 rounded-xl bg-cyan-500/10 text-cyan-400 shrink-0"><i data-lucide="clipboard-paste" class="w-5 h-5"></i></div>
+      <div class="min-w-0 flex-1">
+        <p class="text-sm font-semibold text-gray-100">رابط تنزيل في الحافظة</p>
+        <p id="clipboard-offer-name" dir="auto" class="text-xs text-gray-400 truncate"></p>
+      </div>
+    </div>
+    <div class="flex justify-end gap-2 mt-3">
+      <button onclick="dismissClipboardOffer()" class="px-3 py-1.5 rounded-lg text-xs text-gray-400 hover:text-white hover:bg-white/5">تجاهل</button>
+      <button onclick="acceptClipboardOffer()" class="px-4 py-1.5 rounded-lg bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white text-xs font-medium">تنزيل</button>
+    </div>
+  </div>
 
   <!-- Modern Luxury Update Modal -->
   <div id="update-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md hidden transition-all duration-200">

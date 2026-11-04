@@ -12,7 +12,7 @@ import secrets
 from contextlib import asynccontextmanager
 from typing import Optional, Dict, Any, List, Callable
 from urllib.parse import parse_qs, urlparse
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query, Request
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query, Request, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
@@ -21,8 +21,9 @@ from starlette.datastructures import Headers, MutableHeaders
 from starlette.requests import cookie_parser
 from starlette.websockets import WebSocketClose
 
-from openhydro.core import DownloadEngine, TaskStatus, StorageManager
+from openhydro.core import DownloadEngine, TaskStatus, StorageManager, autostart
 from openhydro.core.security import load_or_create_secret, is_within_directory
+from openhydro.core.settings import SettingsError
 
 LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
 EXTENSION_ORIGIN_PATTERN = r"^(chrome-extension|moz-extension)://[A-Za-z0-9._-]+$"
@@ -39,9 +40,11 @@ class LocalAccessGuard:
       so arbitrary websites cannot drive the downloader.
     """
 
-    def __init__(self, app, token: str):
+    def __init__(self, app, token: str, remote_allowed: Callable[[], bool] = lambda: True):
         self.app = app
         self.token = token
+        # Phone/LAN control setting, read on every request so turning it off applies at once
+        self.remote_allowed = remote_allowed
 
     async def __call__(self, scope, receive, send):
         if scope["type"] not in ("http", "websocket"):
@@ -66,6 +69,9 @@ class LocalAccessGuard:
             if request_host not in LOOPBACK_HOSTS and not authorized:
                 await self._reject(scope, receive, send, 403, "Host not allowed")
                 return
+        elif not self.remote_allowed():
+            await self._reject(scope, receive, send, 403, "التحكم من الموبايل متوقف (فعّله من إعدادات OpenHydro)")
+            return
         elif not authorized:
             await self._reject(scope, receive, send, 401, "رمز التحكم عن بُعد مطلوب (امسح رمز QR من التطبيق)")
             return
@@ -108,7 +114,7 @@ class AddTaskRequest(BaseModel):
     url: str
     filename: Optional[str] = None
     save_dir: Optional[str] = None
-    num_connections: int = Field(default=8, ge=1, le=32)
+    num_connections: Optional[int] = Field(default=None, ge=1, le=32)  # None: the user's default
     custom_headers: Optional[Dict[str, str]] = None
     referrer: Optional[str] = None
     auto_start: bool = True
@@ -145,7 +151,7 @@ class PlaylistDownloadRequest(BaseModel):
     playlist_title: str
     format_id: str = "bestvideo[height<=720]+bestaudio/best"
     items: List[PlaylistItemRequest]
-    num_connections: int = Field(default=8, ge=1, le=32)
+    num_connections: Optional[int] = Field(default=None, ge=1, le=32)  # None: the user's default
 
 
 class UpdateDownloadRequest(BaseModel):
@@ -161,6 +167,8 @@ def create_app(
     engine: DownloadEngine,
     remote_token: Optional[str] = None,
     on_show_window: Optional[Callable[[], None]] = None,
+    listening_on_network: bool = True,
+    clipboard=None,
 ) -> FastAPI:
     from .websocket import TelemetryHub
 
@@ -183,6 +191,11 @@ def create_app(
     async def add_pna_header(request, call_next):
         response = await call_next(request)
         response.headers["Access-Control-Allow-Private-Network"] = "true"
+        # The dashboard changes with every update: always revalidate (a 304 from this PC is cheap),
+        # so a browser never keeps an old page next to newer scripts
+        path = request.url.path
+        if path == "/" or path.startswith("/static/"):
+            response.headers.setdefault("Cache-Control", "no-cache")
         return response
 
     # Only the browser extension needs cross-origin access; the dashboard is same-origin
@@ -193,7 +206,8 @@ def create_app(
         allow_headers=["*"],
     )
     # Added last so it wraps everything (including CORS preflights and the WebSocket)
-    app.add_middleware(LocalAccessGuard, token=remote_token)
+    app.add_middleware(LocalAccessGuard, token=remote_token,
+                       remote_allowed=lambda: engine.settings.get("remote_access"))
 
     def ensure_inside_download_dir(save_dir: Optional[str]):
         if save_dir and not is_within_directory(engine.download_dir, save_dir):
@@ -516,10 +530,52 @@ def create_app(
         engine.scheduler.set_auto_shutdown(False)
         return {"status": "cancelled" if ok else "failed"}
 
+    def apply_settings(changes: Dict[str, Any]) -> Dict[str, Any]:
+        """Validates, saves and applies settings (all or none); a rejected value is an HTTP 400."""
+        try:
+            applied = engine.settings.update(changes)
+        except SettingsError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        if "download_dir" in applied:
+            engine.download_dir = applied["download_dir"] or StorageManager.get_default_download_dir()
+            engine.torrent_manager.download_dir = engine.download_dir
+        if "max_active_downloads" in applied:
+            engine.scheduler.set_max_active(applied["max_active_downloads"])
+        if "speed_limit_kbps" in applied:
+            engine.rate_limiter.set_limit(applied["speed_limit_kbps"] * 1024)
+        return applied
+
+    def settings_view() -> Dict[str, Any]:
+        return {
+            **engine.settings.as_dict(),
+            "effective_download_dir": engine.download_dir,
+            "start_with_windows": autostart.is_enabled(),  # None: not available in this build
+            "remote_listening": listening_on_network,
+        }
+
+    @app.get("/api/settings")
+    async def get_settings():
+        return settings_view()
+
+    @app.put("/api/settings")
+    async def update_settings(changes: Dict[str, Any] = Body(...)):
+        start_with_windows = changes.pop("start_with_windows", None)
+        if start_with_windows is not None and not isinstance(start_with_windows, bool):
+            raise HTTPException(status_code=400, detail="التشغيل مع ويندوز يجب أن يكون true أو false")
+        apply_settings(changes)
+        if start_with_windows is not None:
+            try:
+                autostart.set_enabled(start_with_windows)
+            except (RuntimeError, OSError) as e:
+                raise HTTPException(status_code=400, detail=str(e))
+        view = settings_view()
+        # The server binds to the network only at startup; turning control off applies at once
+        view["restart_required"] = view["remote_access"] and not listening_on_network
+        return view
+
     @app.post("/api/settings/limiter")
     async def set_limiter(req: SpeedLimitRequest):
-        bytes_per_sec = req.max_kbps * 1024
-        engine.rate_limiter.set_limit(bytes_per_sec)
+        apply_settings({"speed_limit_kbps": req.max_kbps})
         return {"max_kbps": req.max_kbps}
 
     @app.get("/api/settings/limiter")
@@ -528,7 +584,8 @@ def create_app(
 
     @app.post("/api/settings/scheduler")
     async def set_scheduler(req: SchedulerRequest):
-        engine.scheduler.set_max_active(req.max_active)
+        apply_settings({"max_active_downloads": req.max_active})
+        # The scheduled time and auto-shutdown are deliberately not kept across restarts
         engine.scheduler.set_schedule_start(req.scheduled_time)
         engine.scheduler.set_auto_shutdown(req.auto_shutdown)
         return {
@@ -547,7 +604,18 @@ def create_app(
 
     @app.get("/api/system")
     async def get_system_info():
-        total, used, free = shutil.disk_usage(engine.download_dir)
+        # The folder may not exist yet (it is created by the first download) or its drive may be gone
+        total = free = None
+        path = os.path.abspath(engine.download_dir)
+        while True:
+            try:
+                total, _, free = shutil.disk_usage(path)
+                break
+            except OSError:
+                parent = os.path.dirname(path)
+                if parent == path:
+                    break
+                path = parent
         total_speed = sum(t.speed for t in engine.tasks.values() if t.status == TaskStatus.DOWNLOADING)
         return {
             "download_dir": engine.download_dir,
@@ -580,6 +648,8 @@ def create_app(
             "url": remote_url,
             "active_tasks": sum(1 for t in engine.tasks.values() if t.status == TaskStatus.DOWNLOADING),
             "total_tasks": len(engine.tasks),
+            "enabled": engine.settings.get("remote_access"),
+            "listening": listening_on_network,
         }
 
     # Browser Extension Info & Explorer Launcher
@@ -590,6 +660,17 @@ def create_app(
             raise HTTPException(status_code=404, detail="No window to show")
         await asyncio.to_thread(on_show_window)
         return {"status": "shown"}
+
+    # A download link copied anywhere (clipboard monitoring), waiting for the user
+    @app.get("/api/clipboard")
+    async def get_clipboard_offer():
+        return {"link": clipboard.current_offer() if clipboard else None}
+
+    @app.post("/api/clipboard/dismiss")
+    async def dismiss_clipboard_offer():
+        if clipboard:
+            clipboard.dismiss()
+        return {"status": "dismissed"}
 
     @app.get("/api/version")
     async def get_app_version():

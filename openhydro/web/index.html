@@ -518,6 +518,14 @@
 
         <label class="p-3 rounded-xl bg-white/5 border border-white/10 flex items-center justify-between cursor-pointer">
           <div>
+            <p class="font-semibold text-gray-200">مراقبة الحافظة</p>
+            <p class="text-[10px] text-gray-400">عند نسخ رابط ملف (برنامج، فيديو، ملف مضغوط...) أو رابط ماجنت يعرض البرنامج تنزيله. لا يبدأ أي تنزيل بدون موافقتك.</p>
+          </div>
+          <input type="checkbox" id="set-clipboard" class="w-4 h-4 accent-cyan-500 rounded cursor-pointer">
+        </label>
+
+        <label class="p-3 rounded-xl bg-white/5 border border-white/10 flex items-center justify-between cursor-pointer">
+          <div>
             <p class="font-semibold text-gray-200">التشغيل مع ويندوز</p>
             <p class="text-[10px] text-gray-400">يبدأ البرنامج في الخلفية بجوار الساعة عند تسجيل الدخول.</p>
             <p id="set-autostart-note" class="text-[10px] text-amber-400 hidden">متاح في النسخة المثبتة فقط.</p>
@@ -680,6 +688,21 @@
 
   <!-- Toast Container -->
   <div id="openhydro-toast-container"></div>
+
+  <!-- Clipboard monitoring: a download link copied anywhere, waiting for the user -->
+  <div id="clipboard-offer" class="fixed bottom-5 left-5 z-40 w-80 max-w-[calc(100vw-2.5rem)] p-4 rounded-2xl bg-slate-900/95 border border-cyan-500/30 shadow-2xl shadow-cyan-500/10 hidden">
+    <div class="flex items-start gap-3">
+      <div class="p-2 rounded-xl bg-cyan-500/10 text-cyan-400 shrink-0"><i data-lucide="clipboard-paste" class="w-5 h-5"></i></div>
+      <div class="min-w-0 flex-1">
+        <p class="text-sm font-semibold text-gray-100">رابط تنزيل في الحافظة</p>
+        <p id="clipboard-offer-name" dir="auto" class="text-xs text-gray-400 truncate"></p>
+      </div>
+    </div>
+    <div class="flex justify-end gap-2 mt-3">
+      <button onclick="dismissClipboardOffer()" class="px-3 py-1.5 rounded-lg text-xs text-gray-400 hover:text-white hover:bg-white/5">تجاهل</button>
+      <button onclick="acceptClipboardOffer()" class="px-4 py-1.5 rounded-lg bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white text-xs font-medium">تنزيل</button>
+    </div>
+  </div>
 
   <!-- Modern Luxury Update Modal -->
   <div id="update-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md hidden transition-all duration-200">

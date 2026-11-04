@@ -49,6 +49,7 @@ from openhydro.core import DownloadEngine, TaskStatus, SystemTrayManager
 import openhydro
 from openhydro.core import ytdlp_updater
 from openhydro.core.instance import InstanceLock, ask_running_instance_to_show
+from openhydro.core.clipboard import ClipboardWatcher
 from openhydro.api import create_app
 
 # OPENHYDRO_PORT only exists for development/testing next to an installed copy
@@ -85,11 +86,12 @@ def wait_for_server(host: str, port: int, timeout: float = 12.0) -> bool:
     return False
 
 
-def start_server(engine: DownloadEngine, bind_host: str, on_show_window=None):
+def start_server(engine: DownloadEngine, bind_host: str, on_show_window=None, clipboard=None):
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        app = create_app(engine, on_show_window=on_show_window, listening_on_network=bind_host != "127.0.0.1")
+        app = create_app(engine, on_show_window=on_show_window, listening_on_network=bind_host != "127.0.0.1",
+                         clipboard=clipboard)
         config = uvicorn.Config(
             app,
             host=bind_host,
@@ -193,8 +195,16 @@ def main():
 
     engine.register_listener(notify_finished)
 
+    def offer_copied_link(offer):
+        # Clicking the notification opens the add dialog with the link (clipboard monitoring)
+        tray.notify(f"📋 {offer['filename'][:120]}\nاضغط هنا لتنزيله", "رابط تنزيل في الحافظة",
+                    on_click=lambda: (show_window_action(), clipboard.request_open()))
+
+    clipboard = ClipboardWatcher(engine, on_offer=offer_copied_link)
+
     # Start FastAPI server in a dedicated thread
-    server_thread = threading.Thread(target=start_server, args=(engine, bind_host, show_window_action), daemon=True)
+    server_thread = threading.Thread(target=start_server, args=(engine, bind_host, show_window_action, clipboard),
+                                     daemon=True)
     server_thread.start()
 
     # Actively wait until the FastAPI TCP server is confirmed UP and responding!
@@ -204,6 +214,7 @@ def main():
 
     # Loads yt-dlp in the background (faster first video probe) and fetches a newer one daily
     ytdlp_updater.start_background(openhydro.__version__)
+    clipboard.start()
 
     def wait_until_interrupted():
         try:

@@ -168,6 +168,7 @@ def create_app(
     remote_token: Optional[str] = None,
     on_show_window: Optional[Callable[[], None]] = None,
     listening_on_network: bool = True,
+    clipboard=None,
 ) -> FastAPI:
     from .websocket import TelemetryHub
 
@@ -643,6 +644,17 @@ def create_app(
             raise HTTPException(status_code=404, detail="No window to show")
         await asyncio.to_thread(on_show_window)
         return {"status": "shown"}
+
+    # A download link copied anywhere (clipboard monitoring), waiting for the user
+    @app.get("/api/clipboard")
+    async def get_clipboard_offer():
+        return {"link": clipboard.current_offer() if clipboard else None}
+
+    @app.post("/api/clipboard/dismiss")
+    async def dismiss_clipboard_offer():
+        if clipboard:
+            clipboard.dismiss()
+        return {"status": "dismissed"}
 
     @app.get("/api/version")
     async def get_app_version():

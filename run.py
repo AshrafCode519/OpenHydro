@@ -46,6 +46,8 @@ import asyncio
 import uvicorn
 
 from openhydro.core import DownloadEngine, TaskStatus, SystemTrayManager
+import openhydro
+from openhydro.core import ytdlp_updater
 from openhydro.core.instance import InstanceLock, ask_running_instance_to_show
 from openhydro.api import create_app
 
@@ -126,6 +128,11 @@ def main():
             ask_running_instance_to_show(LOCAL_URL)
         return
 
+    # Before anything imports yt_dlp: prefer a newer copy downloaded by an earlier run
+    ytdlp_version = ytdlp_updater.activate(openhydro.__version__)
+    if ytdlp_version:
+        print(f"[OpenHydro] Using updated yt-dlp {ytdlp_version}")
+
     print("=" * 60)
     print("[OpenHydro] Modern Dynamic Download Manager")
     print("[OpenHydro] Dynamic Segmentation Engine: Active")
@@ -185,6 +192,9 @@ def main():
     server_ready = wait_for_server("127.0.0.1", PORT, timeout=12.0)
     if not server_ready:
         print("[OpenHydro] Warning: Server socket did not bind within timeout.")
+
+    # Loads yt-dlp in the background (faster first video probe) and fetches a newer one daily
+    ytdlp_updater.start_background(openhydro.__version__)
 
     def wait_until_interrupted():
         try:

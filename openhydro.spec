@@ -42,6 +42,8 @@ hidden_imports = [
 hidden_imports += collect_submodules('uvicorn')
 hidden_imports += collect_submodules('openhydro')
 hidden_imports += collect_submodules('youtube_transcript_api')
+# yt-dlp's YouTube challenge solver: Python package plus its JavaScript files
+hidden_imports += collect_submodules('yt_dlp_ejs')
 hidden_imports += collect_submodules('h11')
 hidden_imports += collect_submodules('starlette')
 hidden_imports += collect_submodules('fastapi')
@@ -53,6 +55,7 @@ datas = [
     ('openhydro/bin', 'openhydro/bin'),
     ('assets', 'assets'),
 ]
+datas += collect_data_files('yt_dlp_ejs')
 
 a = Analysis(
     ['run.py'],

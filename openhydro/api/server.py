@@ -594,7 +594,8 @@ def create_app(
     @app.get("/api/version")
     async def get_app_version():
         import openhydro
-        return {"version": openhydro.__version__}
+        ytdlp = sys.modules.get("yt_dlp.version")
+        return {"version": openhydro.__version__, "yt_dlp": getattr(ytdlp, "__version__", None)}
 
     @app.get("/api/updates/check")
     async def check_updates():

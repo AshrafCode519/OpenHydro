@@ -31,6 +31,10 @@ VIDEO_EXTS = ("mp4", "mkv", "webm", "mov", "m4v", "flv")
 AUDIO_EXTS = ("m4a", "opus", "webm", "ogg", "aac", "mp3")
 SUBTITLE_EXTS = ("srt", "vtt", "ass")
 
+# YouTube's challenges need a JavaScript runtime and yt-dlp only looks for Deno by default:
+# enable every runtime it supports so an installed Node.js or Bun is used too
+JS_RUNTIMES = {"deno": {}, "node": {}, "bun": {}}
+
 
 class VideoExtractor:
     @staticmethod
@@ -136,6 +140,7 @@ class VideoExtractor:
         ydl_opts = {
             "extract_flat": True,
             "quiet": True,
+            "js_runtimes": JS_RUNTIMES,
             "no_warnings": True,
             "skip_download": True,
         }
@@ -204,6 +209,7 @@ class VideoExtractor:
         if info is None:
             ydl_opts = {
                 "quiet": True,
+                "js_runtimes": JS_RUNTIMES,
                 "no_warnings": True,
                 "skip_download": True,
                 "noplaylist": True,
@@ -467,6 +473,7 @@ class VideoExtractor:
                 "subtitlesformat": wanted,
                 "outtmpl": cls._outtmpl(out_base),
                 "quiet": True,
+                "js_runtimes": JS_RUNTIMES,
                 "no_warnings": True,
             }
             try:
@@ -490,6 +497,7 @@ class VideoExtractor:
             "retries": 10,
             "fragment_retries": 10,
             "quiet": True,
+            "js_runtimes": JS_RUNTIMES,
             "no_warnings": True,
             # Progress reaches the UI through the hook; the console bar only bloated openhydro.log
             "noprogress": True,

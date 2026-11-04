@@ -10,7 +10,7 @@ import shutil
 import asyncio
 import secrets
 from contextlib import asynccontextmanager
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Callable
 from urllib.parse import parse_qs, urlparse
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -157,7 +157,11 @@ class UpdateInstallRequest(BaseModel):
     task_id: str
 
 
-def create_app(engine: DownloadEngine, remote_token: Optional[str] = None) -> FastAPI:
+def create_app(
+    engine: DownloadEngine,
+    remote_token: Optional[str] = None,
+    on_show_window: Optional[Callable[[], None]] = None,
+) -> FastAPI:
     from .websocket import TelemetryHub
 
     hub = TelemetryHub()
@@ -554,7 +558,7 @@ def create_app(engine: DownloadEngine, remote_token: Optional[str] = None) -> Fa
         }
 
     @app.get("/api/system/remote_info")
-    async def get_remote_info():
+    async def get_remote_info(request: Request):
         import socket
         local_ip = "127.0.0.1"
         try:
@@ -568,7 +572,7 @@ def create_app(engine: DownloadEngine, remote_token: Optional[str] = None) -> Fa
             except Exception:
                 local_ip = "127.0.0.1"
 
-        port = 8765
+        port = request.url.port or 8765
         remote_url = f"http://{local_ip}:{port}/?token={remote_token}"
         return {
             "ip": local_ip,
@@ -579,10 +583,19 @@ def create_app(engine: DownloadEngine, remote_token: Optional[str] = None) -> Fa
         }
 
     # Browser Extension Info & Explorer Launcher
+    @app.post("/api/app/show")
+    async def show_app_window():
+        """Called by a second launch of the app (single instance) to bring this instance's window up."""
+        if on_show_window is None:
+            raise HTTPException(status_code=404, detail="No window to show")
+        await asyncio.to_thread(on_show_window)
+        return {"status": "shown"}
+
     @app.get("/api/version")
     async def get_app_version():
         import openhydro
-        return {"version": openhydro.__version__}
+        ytdlp = sys.modules.get("yt_dlp.version")
+        return {"version": openhydro.__version__, "yt_dlp": getattr(ytdlp, "__version__", None)}
 
     @app.get("/api/updates/check")
     async def check_updates():

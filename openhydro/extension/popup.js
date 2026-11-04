@@ -46,6 +46,15 @@ document.getElementById("send-btn").addEventListener("click", async () => {
   }
 });
 
+// Automatic capture of browser downloads (on by default, see background.js)
+const captureToggle = document.getElementById("capture-toggle");
+chrome.storage.local.get({ captureEnabled: true }, (settings) => {
+  captureToggle.checked = settings.captureEnabled;
+});
+captureToggle.addEventListener("change", () => {
+  chrome.storage.local.set({ captureEnabled: captureToggle.checked });
+});
+
 // Auto grab active tab URL
 chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
   if (tabs && tabs[0] && tabs[0].url && tabs[0].url.startsWith("http")) {

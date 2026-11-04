@@ -24,9 +24,12 @@ from .scheduler import SmartScheduler
 from .extractor import VideoExtractor
 from .torrent import TorrentManager
 from .security import sanitize_filename, get_app_data_dir
+from .settings import AppSettings
 
 # Minimum seconds between two progress events for the same task (status changes are immediate)
 PROGRESS_EVENT_INTERVAL = 0.25
+# Seconds between saves of a running download's progress (its resume point) to the task store
+PROGRESS_SAVE_INTERVAL = 2.0
 
 # Retrying these will not help (expired/forbidden link, missing file): give up after one more try
 PERMANENT_HTTP_ERRORS = {400, 401, 403, 404, 405, 410, 416, 451}
@@ -35,15 +38,17 @@ PERMANENT_ERROR_RETRIES = 1
 
 class DownloadEngine:
     def __init__(self, download_dir: Optional[str] = None, store_path: Optional[str] = None):
-        self.download_dir = download_dir or StorageManager.get_default_download_dir()
         self.store = TaskStore(store_path or os.path.join(get_app_data_dir(), "tasks.db"))
+        self.settings = AppSettings(self.store)
+        # An explicit folder (tests, scripts) wins over the user's setting
+        self.download_dir = download_dir or self.settings.get("download_dir") or StorageManager.get_default_download_dir()
         self.tasks: Dict[str, DownloadTask] = {}
-        self.rate_limiter = RateLimiter(0)  # Unlimited by default
+        self.rate_limiter = RateLimiter(self.settings.get("speed_limit_kbps") * 1024)
         self._running_loops: Dict[str, asyncio.Task] = {}
         self._listeners: List[Callable] = []
         self._last_progress_event: Dict[str, float] = {}
         self._lock = threading.Lock()
-        self.scheduler = SmartScheduler(self)
+        self.scheduler = SmartScheduler(self, max_active_downloads=self.settings.get("max_active_downloads"))
         self.torrent_manager = TorrentManager(self.download_dir)
         self._loop: Optional[asyncio.AbstractEventLoop] = None
 
@@ -72,8 +77,12 @@ class DownloadEngine:
         """Restores interrupted/completed tasks from the task store on startup."""
         try:
             self._import_legacy_meta_files()
+            auto_resume = self.settings.get("auto_resume")
             with self._lock:
                 for task in self.store.load_all():
+                    # Interrupted downloads come back queued; the scheduler restarts them
+                    if task.status == TaskStatus.QUEUED and not auto_resume:
+                        task.status = TaskStatus.PAUSED
                     self.tasks[task.id] = task
         except Exception as e:
             print(f"[Engine] Error restoring tasks: {e}")
@@ -291,12 +300,14 @@ class DownloadEngine:
         url: str,
         filename: Optional[str] = None,
         save_dir: Optional[str] = None,
-        num_connections: int = 8,
+        num_connections: Optional[int] = None,
         custom_headers: Optional[Dict[str, str]] = None,
         referrer: Optional[str] = None,
         auto_start: bool = True,
         format_id: Optional[str] = None,
     ) -> DownloadTask:
+        num_connections = num_connections or self.settings.get("default_connections")
+
         # Check if Magnet or Torrent link
         if url.startswith("magnet:") or url.lower().endswith(".torrent") or (filename and filename.lower().endswith(".torrent")):
             target_save_dir = save_dir or StorageManager.get_category_dir(self.download_dir, "torrent")
@@ -598,6 +609,7 @@ class DownloadEngine:
         async def speed_monitor():
             last_bytes = task.downloaded_bytes
             last_time = time.time()
+            last_saved = time.time()
 
             while task.status == TaskStatus.DOWNLOADING:
                 await asyncio.sleep(0.5)
@@ -617,7 +629,10 @@ class DownloadEngine:
                         task.eta_seconds = None
 
                     self._notify("task_progress", task)
-                    self.store.save(task)
+                    # Resume points every 2 s are plenty; every status change is saved on its own
+                    if now - last_saved >= PROGRESS_SAVE_INTERVAL:
+                        self.store.save(task)
+                        last_saved = now
 
         try:
             monitor_task = asyncio.create_task(speed_monitor())

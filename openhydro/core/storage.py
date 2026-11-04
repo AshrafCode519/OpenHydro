@@ -12,11 +12,15 @@ import threading
 from typing import Optional, Dict, Any, List, Tuple
 from .task import DownloadTask, Chunk, TaskStatus
 
-# Saved states that survive a restart as-is; anything else (downloading, queued...) was interrupted
-RESTORED_AS_IS = {
+# Status a saved task comes back with after a restart (anything else: PAUSED). Downloads that were
+# running or waiting when the app closed (or crashed) go back in the queue; the engine pauses them
+# instead when auto-resume is off. A download the user paused stays paused.
+RESTORED_STATUS = {
     TaskStatus.COMPLETED.value: TaskStatus.COMPLETED,
     TaskStatus.ERROR.value: TaskStatus.ERROR,
     TaskStatus.CANCELLED.value: TaskStatus.CANCELLED,
+    TaskStatus.DOWNLOADING.value: TaskStatus.QUEUED,
+    TaskStatus.QUEUED.value: TaskStatus.QUEUED,
 }
 
 
@@ -182,7 +186,7 @@ class StorageManager:
         # does not mean "finished". Only very old records without a status fall back to that guess.
         saved_status = data.get("status")
         if saved_status:
-            task.status = RESTORED_AS_IS.get(saved_status, TaskStatus.PAUSED)
+            task.status = RESTORED_STATUS.get(saved_status, TaskStatus.PAUSED)
         elif os.path.exists(task.save_path) and not os.path.exists(cls.get_part_path(task.save_path)):
             task.status = TaskStatus.COMPLETED
         else:

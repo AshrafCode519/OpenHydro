@@ -696,6 +696,9 @@ async function setSpeedLimit(kbps) {
 function openAddModal(prefillUrl = '') {
   const modal = document.getElementById('add-modal');
   modal.classList.remove('hidden');
+  if (appSettings) {
+    document.getElementById('modal-connections-select').value = String(appSettings.default_connections);
+  }
   const input = document.getElementById('modal-url-input');
   if (prefillUrl) {
     input.value = prefillUrl;
@@ -1002,11 +1005,81 @@ if (dropZone) {
   });
 }
 
+// --- Settings ---
+let appSettings = null;
+
+async function loadSettings() {
+  const res = await fetch('/api/settings');
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  appSettings = await res.json();
+  return appSettings;
+}
+
+async function openSettingsModal() {
+  document.getElementById('settings-modal').classList.remove('hidden');
+  lucide.createIcons();
+  try {
+    const s = await loadSettings();
+    const dirInput = document.getElementById('set-download-dir');
+    dirInput.value = s.download_dir || '';
+    dirInput.placeholder = s.effective_download_dir;
+    document.getElementById('set-default-connections').value = String(s.default_connections);
+    document.getElementById('set-auto-resume').checked = s.auto_resume;
+    document.getElementById('set-notify').checked = s.notify_on_complete;
+    document.getElementById('set-remote').checked = s.remote_access;
+    // null: only the installed app can register itself to start with Windows
+    const autostart = document.getElementById('set-autostart');
+    autostart.checked = !!s.start_with_windows;
+    autostart.disabled = s.start_with_windows === null;
+    document.getElementById('set-autostart-note').classList.toggle('hidden', s.start_with_windows !== null);
+  } catch (e) {
+    showToast('تعذر تحميل الإعدادات: ' + e.message, 'error');
+  }
+}
+
+function closeSettingsModal() {
+  document.getElementById('settings-modal').classList.add('hidden');
+  if (window.location.hash === '#settings') history.replaceState(null, '', window.location.pathname);
+}
+
+async function saveSettings() {
+  const autostart = document.getElementById('set-autostart');
+  const changes = {
+    download_dir: document.getElementById('set-download-dir').value.trim() || null,
+    default_connections: parseInt(document.getElementById('set-default-connections').value, 10),
+    auto_resume: document.getElementById('set-auto-resume').checked,
+    notify_on_complete: document.getElementById('set-notify').checked,
+    remote_access: document.getElementById('set-remote').checked,
+  };
+  if (!autostart.disabled) changes.start_with_windows = autostart.checked;
+
+  try {
+    const res = await fetch('/api/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(changes),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'HTTP ' + res.status);
+    appSettings = data;
+    closeSettingsModal();
+    if (data.restart_required) {
+      showToast('تم الحفظ. أعد تشغيل البرنامج لتفعيل التحكم من الموبايل', 'warning', 7000);
+    } else {
+      showToast('تم حفظ الإعدادات', 'success');
+    }
+  } catch (e) {
+    showToast('لم يتم الحفظ: ' + e.message, 'error', 6000);
+  }
+}
+
 // Initialization
 window.addEventListener('DOMContentLoaded', () => {
   initWebSocket();
   fetchSystemInfo();
   setInterval(fetchSystemInfo, 10000);
+  loadSettings().catch(() => {});
+  if (window.location.hash === '#settings') openSettingsModal();
 
   // Check URL params for auto-opening playlist modal
   const urlParams = new URLSearchParams(window.location.search);
@@ -1554,7 +1627,13 @@ async function openMobileRemoteModal() {
     const data = await res.json();
     const urlText = document.getElementById('mobile-remote-url-text');
     const qrImg = document.getElementById('mobile-qr-image');
-    if (urlText) urlText.innerText = data.url;
+    // Phone control is off by default; it also needs a restart to start listening on the network
+    const blocked = !data.enabled
+      ? 'التحكم من الموبايل متوقف. فعّله من الإعدادات.'
+      : (!data.listening ? 'أعد تشغيل OpenHydro لتفعيل التحكم من الموبايل.' : null);
+    if (qrImg) qrImg.classList.toggle('hidden', !!blocked);
+    if (urlText) urlText.innerText = blocked || data.url;
+    if (blocked) return;
     // Generated locally: the URL carries the remote-control token and must not go to a third-party QR service
     if (qrImg && typeof qrcode === 'function') {
       const qr = qrcode(0, 'M');

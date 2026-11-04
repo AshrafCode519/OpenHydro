@@ -282,5 +282,75 @@ class TestClipboardOffer(DashboardTestCase):
         self.assertNoJsErrors()
 
 
+class TestDownloadWindowPage(DashboardTestCase):
+    """web/download.html: what the desktop app's download window shows (at its real size)."""
+
+    def setUp(self):
+        super().setUp()
+        self.browser.send("Emulation.setDeviceMetricsOverride", width=484, height=341, deviceScaleFactor=1,
+                          mobile=False)
+        self.addCleanup(self.browser.send, "Emulation.clearDeviceMetricsOverride")
+
+    def open_window(self, task):
+        self.browser.open(f"{self.server.url}static/download.html?task={task.id}")
+        self.browser.evaluate(NO_ANIMATIONS)
+        self.browser.wait_for(f"document.getElementById('dw-name').textContent === {task.filename!r}",
+                              message="the download was not shown")
+
+    def text(self, element_id):
+        return self.browser.evaluate(f"document.getElementById('{element_id}').textContent.trim()")
+
+    def visible(self, element_id):
+        return self.browser.evaluate(f"!!document.getElementById('{element_id}').offsetParent")
+
+    def test_progress_pause_and_completion(self):
+        task = self.tasks["downloading"]
+        self.open_window(task)
+        self.assertEqual(self.text("dw-status"), "جاري التنزيل (8 اتصالات)")
+        self.assertEqual(self.text("dw-size"), "6 GB")
+        self.assertEqual(self.text("dw-done"), "4 GB (66.67%)")
+        self.assertEqual(self.text("dw-speed"), "12.50 MB/s")
+        self.assertEqual(self.text("dw-resumable"), "نعم")
+        self.assertEqual(self.browser.evaluate("document.querySelectorAll('#dw-segments .segment-cell').length"), 4)
+        self.assertEqual(self.browser.evaluate("document.title"), "66% Ubuntu-24.04-desktop-amd64.iso")
+        self.assertEqual([self.visible(b) for b in ("dw-pause", "dw-resume", "dw-cancel", "dw-open")],
+                         [True, False, True, False])
+        # Everything fits the fixed-size window
+        self.assertEqual(self.browser.evaluate(
+            "document.documentElement.scrollHeight <= innerHeight && document.documentElement.scrollWidth <= innerWidth"),
+            True)
+
+        task.chunks[2].current_byte = task.chunks[2].end_byte
+        self.engine._notify("task_progress", task)
+        self.browser.wait_for("document.title.startsWith('75%')", message="progress was not shown")
+
+        self.browser.evaluate("document.getElementById('dw-pause').click()")
+        eventually(lambda: task.status == "paused")
+        self.browser.wait_for("!!document.getElementById('dw-resume').offsetParent")
+        self.assertEqual(self.text("dw-status"), "متوقف مؤقتاً")
+
+        task.status = TaskStatus.COMPLETED
+        self.engine._notify("task_completed", task)
+        self.browser.wait_for("!!document.getElementById('dw-complete').offsetParent", message="no completed view")
+        self.assertEqual([self.visible(b) for b in ("dw-pause", "dw-cancel", "dw-open", "dw-folder")],
+                         [False, False, True, True])
+        self.assertEqual(self.text("dw-close"), "إغلاق")
+        self.assertNoJsErrors()
+
+    def test_error_and_cancel(self):
+        task = self.tasks["error"]
+        self.open_window(task)
+        self.assertEqual(self.text("dw-status"), "خطأ في التنزيل")
+        self.assertEqual(self.text("dw-message"), "HTTP 403")
+        self.browser.evaluate("window.confirm = () => true; document.getElementById('dw-cancel').click()")
+        eventually(lambda: task.status == "cancelled")
+        self.browser.wait_for("document.getElementById('dw-status').textContent === 'تم إلغاء التنزيل'")
+        self.assertNoJsErrors()
+
+    def test_unknown_download(self):
+        self.browser.open(f"{self.server.url}static/download.html?task=no-such-task")
+        self.browser.wait_for("document.getElementById('dw-status').textContent === 'تم إلغاء التنزيل'")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -6,6 +6,10 @@ module.exports = {
   darkMode: 'class',
   theme: {
     extend: {
+      // The header shows every button's label on one line from here (they need about 1700px)
+      screens: {
+        wide: '1800px',
+      },
       colors: {
         hydro: {
           50: '#ecfeff',

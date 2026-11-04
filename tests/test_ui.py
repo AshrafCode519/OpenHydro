@@ -194,6 +194,65 @@ class TestSettingsPage(DashboardTestCase):
         self.assertNoJsErrors()
 
 
+class TestLayout(DashboardTestCase):
+    """The app opens at 1100x720 (min 800x600) and the phone remote serves this same page."""
+
+    SIZES = [(390, 844, True), (800, 600, False), (1100, 720, False), (1920, 1080, False)]
+
+    def setUp(self):
+        super().setUp()
+        for _ in range(2):  # 12 downloads: more than a screen at every size
+            seed_tasks(self.engine, self.dir)
+        self.addCleanup(self.browser.send, "Emulation.clearDeviceMetricsOverride")
+
+    def show(self, width, height, mobile):
+        self.browser.send("Emulation.setDeviceMetricsOverride", width=width, height=height,
+                          deviceScaleFactor=1, mobile=mobile)
+        self.browser.open(self.server.url)
+        self.browser.wait_for(f"{ROWS}.length === 12")
+
+    def test_fits_the_window_and_the_list_scrolls(self):
+        for width, height, mobile in self.SIZES:
+            with self.subTest(size=f"{width}x{height}"):
+                self.show(width, height, mobile)
+                layout = self.browser.evaluate("""({
+                  pageWidth: document.documentElement.scrollWidth,
+                  pageHeight: Math.round(document.body.getBoundingClientRect().height),
+                  listScrolls: (l => l.scrollHeight > l.clientHeight)(document.getElementById('tasks-container')),
+                })""")
+                self.assertEqual(layout, {"pageWidth": width, "pageHeight": height, "listScrolls": True})
+
+    def test_every_header_action_is_reachable(self):
+        for width, height, mobile in self.SIZES:
+            with self.subTest(size=f"{width}x{height}"):
+                self.show(width, height, mobile)
+                if width < 1024:
+                    self.browser.evaluate("document.getElementById('header-menu-btn').click()")
+                hidden = self.browser.evaluate("""
+                  [...document.querySelectorAll('header button[onclick]:not([onclick^="setSpeedLimit"]), #limiter-btn')].filter(b => {
+                    const r = b.getBoundingClientRect();
+                    return !b.offsetParent && b.id !== 'header-menu-btn' || r.left < 0 || r.right > innerWidth;
+                  }).map(b => b.title || b.textContent.trim())
+                """)
+                self.assertEqual(hidden, [])
+                if width < 1024:
+                    # Choosing an action closes the menu
+                    self.browser.evaluate("document.querySelector('#header-actions button[onclick^=\"openSettingsModal\"]').click()")
+                    self.assertTrue(self.browser.evaluate(
+                        "document.getElementById('header-actions').classList.contains('hidden')"))
+
+    def test_category_picker_replaces_the_sidebar_on_phones(self):
+        self.show(390, 844, True)
+        self.assertIsNone(self.browser.evaluate("document.querySelector('aside').offsetParent"))
+        self.browser.evaluate("""
+          const select = document.getElementById('category-select');
+          select.value = 'completed';
+          select.dispatchEvent(new Event('change'));
+        """)
+        self.assertEqual(self.browser.evaluate(f"{ROWS}.length"), 3)
+        self.assertNoJsErrors()
+
+
 class TestClipboardOffer(DashboardTestCase):
     def test_copied_link_is_offered_and_opens_the_add_dialog(self):
         self.clipboard.copy("https://example.com/tool.msi")

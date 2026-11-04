@@ -56,7 +56,7 @@ class DynamicSegmenter:
             return None
 
         # Split remaining range in half
-        current = chunk.current_byte
+        current = candidate_chunk.current_byte
         original_end = candidate_chunk.end_byte
         remaining = original_end - current + 1
         half = remaining // 2

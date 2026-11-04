@@ -6,8 +6,6 @@ and right-clicking the tray icon shows 'Exit' (خروج نهائي) to completel
 """
 
 import sys
-import builtins
-builtins.sys = sys
 import os
 import time
 import socket
@@ -47,7 +45,7 @@ if sys.platform == "win32":
 import asyncio
 import uvicorn
 
-from openhydro.core import DownloadEngine, TaskStatus, StorageManager, SystemTrayManager
+from openhydro.core import DownloadEngine, TaskStatus, SystemTrayManager
 from openhydro.api import create_app
 
 PORT = 8765
@@ -67,7 +65,7 @@ def cleanup(engine: DownloadEngine, tray: SystemTrayManager = None):
     for task in list(engine.tasks.values()):
         if task.status == TaskStatus.DOWNLOADING:
             task.status = TaskStatus.PAUSED
-            StorageManager.save_task_meta(task)
+            engine.store.save(task)
 
 
 def wait_for_server(host: str, port: int, timeout: float = 12.0) -> bool:
@@ -169,9 +167,9 @@ def main():
     server_thread.start()
 
     # Actively wait until the FastAPI TCP server is confirmed UP and responding!
-    server_ready = wait_for_server(HOST, PORT, timeout=12.0)
+    server_ready = wait_for_server("127.0.0.1", PORT, timeout=12.0)
     if not server_ready:
-        print(f"[OpenHydro] Warning: Server socket did not bind within timeout.")
+        print("[OpenHydro] Warning: Server socket did not bind within timeout.")
 
     if args.headless:
         print("[OpenHydro] Running in headless mode. Press Ctrl+C to exit.")

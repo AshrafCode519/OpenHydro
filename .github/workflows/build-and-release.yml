@@ -35,6 +35,17 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
+      - name: Check the dashboard stylesheet is up to date
+        shell: bash
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build:css
+          git diff --exit-code --stat -- openhydro/web/css/tailwind.css || {
+            echo "::error::openhydro/web/css/tailwind.css is out of date: run 'npm run build:css' and commit it"
+            exit 1
+          }
+
+      # Includes the dashboard UI tests (tests/test_ui.py), which use the runner's preinstalled Edge
       - name: Lint (undefined names) and Run Tests
         shell: bash
         env:

@@ -12,29 +12,12 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
   <!-- Bundled, pinned libraries: the dashboard must work offline and not change under us -->
-  <script src="/static/vendor/tailwindcss-3.4.17.js"></script>
   <script src="/static/vendor/lucide-1.67.0.min.js"></script>
   <!-- Local QR generation for the mobile remote link -->
   <script src="/static/vendor/qrcode-generator-1.4.4.min.js"></script>
   <link rel="stylesheet" href="/static/css/style.css">
-  <script>
-    tailwind.config = {
-      darkMode: 'class',
-      theme: {
-        extend: {
-          colors: {
-            hydro: {
-              50: '#ecfeff',
-              400: '#22d3ee',
-              500: '#06b6d4',
-              600: '#0891b2',
-              900: '#164e63',
-            }
-          }
-        }
-      }
-    }
-  </script>
+  <!-- Built by `npm run build:css` (tailwind.config.js). After style.css: Tailwind's classes win, as before -->
+  <link rel="stylesheet" href="/static/css/tailwind.css">
 </head>
 <body class="bg-[#0b0f19] text-gray-100 min-h-screen flex flex-col overflow-hidden">
   <div class="bg-mesh"></div>

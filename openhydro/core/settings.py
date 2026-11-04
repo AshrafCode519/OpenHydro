@@ -17,6 +17,7 @@ DEFAULTS: Dict[str, Any] = {
     "speed_limit_kbps": 0,         # 0: unlimited
     "auto_resume": True,           # downloads interrupted by closing the app continue on the next start
     "notify_on_complete": True,
+    "show_download_window": True,  # IDM-style progress window for downloads started on this PC
     "clipboard_monitor": True,     # offer download links copied anywhere (never downloads without a click)
     "remote_access": False,        # phone/LAN control; off = the server only listens on this PC
 }
@@ -60,6 +61,7 @@ VALIDATORS = {
     "speed_limit_kbps": lambda v: _bounded_int(v, 0, 10_000_000, "حد السرعة"),
     "auto_resume": lambda v: _flag(v, "الاستئناف التلقائي"),
     "notify_on_complete": lambda v: _flag(v, "إشعار الاكتمال"),
+    "show_download_window": lambda v: _flag(v, "نافذة التنزيل"),
     "clipboard_monitor": lambda v: _flag(v, "مراقبة الحافظة"),
     "remote_access": lambda v: _flag(v, "التحكم عن بعد"),
 }

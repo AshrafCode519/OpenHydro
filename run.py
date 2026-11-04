@@ -50,6 +50,7 @@ import openhydro
 from openhydro.core import ytdlp_updater
 from openhydro.core.instance import InstanceLock, ask_running_instance_to_show
 from openhydro.core.clipboard import ClipboardWatcher
+from openhydro.core.download_windows import DownloadWindows
 from openhydro.api import create_app
 
 # OPENHYDRO_PORT only exists for development/testing next to an installed copy
@@ -86,12 +87,13 @@ def wait_for_server(host: str, port: int, timeout: float = 12.0) -> bool:
     return False
 
 
-def start_server(engine: DownloadEngine, bind_host: str, on_show_window=None, clipboard=None):
+def start_server(engine: DownloadEngine, bind_host: str, on_show_window=None, clipboard=None,
+                 on_download_started=None):
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         app = create_app(engine, on_show_window=on_show_window, listening_on_network=bind_host != "127.0.0.1",
-                         clipboard=clipboard)
+                         clipboard=clipboard, on_download_started=on_download_started)
         config = uvicorn.Config(
             app,
             host=bind_host,
@@ -153,6 +155,14 @@ def main():
     tray_notified = [False]
     # Set when a window is wanted while running headless; pywebview must start on the main thread
     window_requested = threading.Event()
+    # pywebview's GUI loop is running: only then can more windows be opened (before it, they would be
+    # queued and pop up later)
+    gui_running = threading.Event()
+    download_windows = DownloadWindows(LOCAL_URL)
+
+    def show_download_window(task):
+        if gui_running.is_set() and engine.settings.get("show_download_window"):
+            download_windows.open(task.id, task.filename)
 
     def show_window_action():
         w = window_holder[0]
@@ -203,8 +213,8 @@ def main():
     clipboard = ClipboardWatcher(engine, on_offer=offer_copied_link)
 
     # Start FastAPI server in a dedicated thread
-    server_thread = threading.Thread(target=start_server, args=(engine, bind_host, show_window_action, clipboard),
-                                     daemon=True)
+    server_thread = threading.Thread(target=start_server, daemon=True,
+                                     args=(engine, bind_host, show_window_action, clipboard, show_download_window))
     server_thread.start()
 
     # Actively wait until the FastAPI TCP server is confirmed UP and responding!
@@ -225,7 +235,19 @@ def main():
             print("[OpenHydro] Shutdown complete.")
             sys.exit(0)
 
-    def run_native_window():
+    def wait_in_background():
+        try:
+            while not window_requested.wait(timeout=1):
+                pass
+        except KeyboardInterrupt:
+            cleanup(engine, tray)
+            print("[OpenHydro] Shutdown complete.")
+            sys.exit(0)
+        # Started at login without a window; the user has now opened OpenHydro
+        print("[OpenHydro] Window requested: opening the desktop window.")
+        run_native_window()
+
+    def run_native_window(hidden=False):
         # Launch native Windows desktop GUI via pywebview with close-to-tray
         try:
             import webview
@@ -237,6 +259,7 @@ def main():
                 height=720,
                 min_size=(800, 600),
                 background_color="#0b0f19",
+                hidden=hidden and not window_requested.is_set(),
             )
             window_holder[0] = w
 
@@ -255,25 +278,25 @@ def main():
 
             w.events.closing += on_closing
 
-            webview.start()
+            webview.start(gui_running.set)
             cleanup(engine, tray)
         except Exception as e:
+            if hidden:
+                print(f"[OpenHydro] No desktop window ({e}): staying in the background.")
+                wait_in_background()
+                return
             print(f"[OpenHydro] pywebview error: {e}. Falling back to default browser...")
             webbrowser.open(url)
             wait_until_interrupted()
 
     if args.headless:
         print("[OpenHydro] Running in headless mode. Press Ctrl+C to exit.")
-        try:
-            while not window_requested.wait(timeout=1):
-                pass
-        except KeyboardInterrupt:
-            cleanup(engine, tray)
-            print("[OpenHydro] Shutdown complete.")
-            sys.exit(0)
-        # Started at login without a window; the user has now opened OpenHydro
-        print("[OpenHydro] Window requested: opening the desktop window.")
-        run_native_window()
+        if sys.platform == "win32":
+            # Started at login, in the tray: the window is created hidden so pywebview's loop runs and
+            # download windows can open (IDM style); opening OpenHydro shows it
+            run_native_window(hidden=True)
+        else:
+            wait_in_background()
 
     elif args.browser:
         print(f"[OpenHydro] Opening dashboard in browser: {url}")

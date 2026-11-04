@@ -2,7 +2,7 @@
 // so the app and its installer need no Node.js). CI fails if that file is out of date.
 // Only complete class names are found: never build one from pieces ('text-' + color).
 module.exports = {
-  content: ['openhydro/web/index.html', 'openhydro/web/js/**/*.js'],
+  content: ['openhydro/web/*.html', 'openhydro/web/js/**/*.js'],
   darkMode: 'class',
   theme: {
     extend: {

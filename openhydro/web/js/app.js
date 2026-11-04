@@ -7,59 +7,6 @@ let currentSearch = '';
 let ws = null;
 let probeTimeout = null;
 
-// Utility Formatters
-function formatBytes(bytes, decimals = 2) {
-  if (bytes === 0 || !bytes) return '0 B';
-  const k = 1024;
-  const dm = decimals < 0 ? 0 : decimals;
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
-}
-
-function formatSpeed(bytesPerSec) {
-  if (!bytesPerSec || bytesPerSec <= 0) return '0.0 KB/s';
-  if (bytesPerSec < 1024 * 1024) {
-    return (bytesPerSec / 1024).toFixed(1) + ' KB/s';
-  }
-  return (bytesPerSec / (1024 * 1024)).toFixed(2) + ' MB/s';
-}
-
-function formatETA(seconds) {
-  if (seconds === null || seconds === undefined || seconds < 0) return '--';
-  if (seconds === 0) return '00:00';
-  const hrs = Math.floor(seconds / 3600);
-  const mins = Math.floor((seconds % 3600) / 60);
-  const secs = seconds % 60;
-  if (hrs > 0) {
-    return `${hrs}h ${mins}m`;
-  }
-  return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-}
-
-function escapeHtml(str) {
-  if (!str) return '';
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}
-
-// Category Icons
-function getCategoryIcon(cat) {
-  switch (cat) {
-    case 'video': return 'video';
-    case 'audio': return 'music';
-    case 'compressed': return 'archive';
-    case 'document': return 'file-text';
-    case 'program': return 'box';
-    case 'torrent': return 'magnet';
-    default: return 'file';
-  }
-}
-
 // --- Modern Toast & Notification System (Replaces ugly browser alert) ---
 function showToast(message, type = 'success', duration = 3500) {
   let container = document.getElementById('openhydro-toast-container');
@@ -482,15 +429,15 @@ function renderTaskCard(task) {
         <!-- Metadata footer -->
         <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs text-gray-400 mt-2 font-mono">
           <div class="flex items-center gap-3">
-            <span class="text-gray-200 font-semibold">${task.progress_percent}%</span>
-            <span>${formatBytes(task.downloaded_bytes)} / ${task.total_bytes ? formatBytes(task.total_bytes) : 'غير محدد'}</span>
+            <span dir="ltr" class="text-gray-200 font-semibold">${task.progress_percent}%</span>
+            <span dir="ltr">${formatBytes(task.downloaded_bytes)} / ${task.total_bytes ? formatBytes(task.total_bytes) : 'غير محدد'}</span>
           </div>
 
           <div class="flex items-center gap-4">
             ${isDownloading ? `
               <span class="text-cyan-400 font-bold flex items-center gap-1">
                 <i data-lucide="zap" class="w-3.5 h-3.5 fill-cyan-400"></i>
-                ${formatSpeed(task.speed)}
+                <span dir="ltr">${formatSpeed(task.speed)}</span>
               </span>
               <span>الوقت المتبقي: ${formatETA(task.eta_seconds)}</span>
             ` : ''}
@@ -1087,6 +1034,7 @@ async function openSettingsModal() {
     document.getElementById('set-default-connections').value = String(s.default_connections);
     document.getElementById('set-auto-resume').checked = s.auto_resume;
     document.getElementById('set-notify').checked = s.notify_on_complete;
+    document.getElementById('set-download-window').checked = s.show_download_window;
     document.getElementById('set-clipboard').checked = s.clipboard_monitor;
     document.getElementById('set-remote').checked = s.remote_access;
     // null: only the installed app can register itself to start with Windows
@@ -1111,6 +1059,7 @@ async function saveSettings() {
     default_connections: parseInt(document.getElementById('set-default-connections').value, 10),
     auto_resume: document.getElementById('set-auto-resume').checked,
     notify_on_complete: document.getElementById('set-notify').checked,
+    show_download_window: document.getElementById('set-download-window').checked,
     clipboard_monitor: document.getElementById('set-clipboard').checked,
     remote_access: document.getElementById('set-remote').checked,
   };

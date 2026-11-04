@@ -191,6 +191,11 @@ def create_app(
     async def add_pna_header(request, call_next):
         response = await call_next(request)
         response.headers["Access-Control-Allow-Private-Network"] = "true"
+        # The dashboard changes with every update: always revalidate (a 304 from this PC is cheap),
+        # so a browser never keeps an old page next to newer scripts
+        path = request.url.path
+        if path == "/" or path.startswith("/static/"):
+            response.headers.setdefault("Cache-Control", "no-cache")
         return response
 
     # Only the browser extension needs cross-origin access; the dashboard is same-origin
@@ -599,7 +604,18 @@ def create_app(
 
     @app.get("/api/system")
     async def get_system_info():
-        total, used, free = shutil.disk_usage(engine.download_dir)
+        # The folder may not exist yet (it is created by the first download) or its drive may be gone
+        total = free = None
+        path = os.path.abspath(engine.download_dir)
+        while True:
+            try:
+                total, _, free = shutil.disk_usage(path)
+                break
+            except OSError:
+                parent = os.path.dirname(path)
+                if parent == path:
+                    break
+                path = parent
         total_speed = sum(t.speed for t in engine.tasks.values() if t.status == TaskStatus.DOWNLOADING)
         return {
             "download_dir": engine.download_dir,

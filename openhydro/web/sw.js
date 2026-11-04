@@ -1,6 +1,6 @@
 // OpenHydro Service Worker for Android PWA Support
 
-const CACHE_NAME = "openhydro-v1.0.0";
+const CACHE_NAME = "openhydro-v1.2.3";  // bump on every release so installed PWAs drop the old cached UI
 const ASSETS = [
   "/",
   "/static/css/style.css",

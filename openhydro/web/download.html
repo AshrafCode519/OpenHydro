@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenHydro</title>
+  <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+  <script src="/static/vendor/lucide-1.67.0.min.js"></script>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <link rel="stylesheet" href="/static/css/tailwind.css">
+</head>
+<!-- The progress window the desktop app opens when a download starts (IDM style); download.js fills it -->
+<body class="bg-[#0b0f19] text-gray-100 h-screen h-dvh overflow-hidden flex flex-col gap-3 p-4 text-sm">
+  <div class="flex items-start gap-3">
+    <div id="dw-icon" class="w-10 h-10 rounded-xl bg-slate-800 border border-white/5 flex items-center justify-center text-cyan-400 shrink-0">
+      <i data-lucide="file" class="w-5 h-5"></i>
+    </div>
+    <div class="min-w-0 flex-1">
+      <h1 id="dw-name" dir="auto" class="font-semibold text-gray-100 truncate">...</h1>
+      <p id="dw-url" dir="ltr" class="text-[11px] text-gray-400 font-mono truncate text-right"></p>
+    </div>
+  </div>
+
+  <section id="dw-progress" class="flex-1 min-h-0 flex flex-col gap-3">
+    <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs">
+      <dt class="text-gray-400">الحالة:</dt>
+      <dd id="dw-status" class="font-semibold text-cyan-400"></dd>
+      <dt class="text-gray-400">حجم الملف:</dt>
+      <dd id="dw-size" dir="ltr" class="font-mono text-gray-200 text-right"></dd>
+      <dt class="text-gray-400">تم تنزيله:</dt>
+      <dd id="dw-done" dir="ltr" class="font-mono text-gray-200 text-right"></dd>
+      <dt class="text-gray-400">السرعة:</dt>
+      <dd id="dw-speed" dir="ltr" class="font-mono text-gray-200 text-right"></dd>
+      <dt class="text-gray-400">الوقت المتبقي:</dt>
+      <dd id="dw-eta" dir="ltr" class="font-mono text-gray-200 text-right"></dd>
+      <dt class="text-gray-400">إمكانية الاستئناف:</dt>
+      <dd id="dw-resumable" class="text-gray-200"></dd>
+    </dl>
+    <div class="w-full h-3 rounded-full bg-slate-800 overflow-hidden">
+      <div id="dw-bar" class="h-full rounded-full bg-gradient-to-r from-cyan-500 to-blue-500 transition-all duration-300" style="width: 0%;"></div>
+    </div>
+    <div id="dw-segments" class="segment-container"></div>
+    <p id="dw-message" class="hidden text-xs text-rose-400 truncate"></p>
+  </section>
+
+  <section id="dw-complete" class="hidden flex-1 min-h-0 flex flex-col items-center justify-center gap-2 text-center">
+    <div class="w-12 h-12 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 flex items-center justify-center">
+      <i data-lucide="check" class="w-7 h-7"></i>
+    </div>
+    <p class="font-semibold text-emerald-400">اكتمل التنزيل</p>
+    <p id="dw-complete-size" dir="ltr" class="text-xs text-gray-400 font-mono"></p>
+    <p id="dw-path" dir="ltr" class="text-[11px] text-gray-500 truncate max-w-full"></p>
+  </section>
+
+  <div class="flex items-center gap-2 pt-3 border-t border-white/10">
+    <button id="dw-pause" onclick="pauseDownload()" class="hidden px-4 py-2 rounded-xl glass-panel glass-panel-hover text-xs text-amber-400">إيقاف مؤقت</button>
+    <button id="dw-resume" onclick="resumeDownload()" class="hidden px-4 py-2 rounded-xl glass-panel glass-panel-hover text-xs text-emerald-400">استئناف</button>
+    <button id="dw-cancel" onclick="cancelDownload()" class="hidden px-4 py-2 rounded-xl glass-panel glass-panel-hover text-xs text-rose-400">إلغاء</button>
+    <button id="dw-open" onclick="openFile()" class="hidden px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white text-xs font-medium">فتح الملف</button>
+    <button id="dw-folder" onclick="openFolder()" class="hidden px-4 py-2 rounded-xl glass-panel glass-panel-hover text-xs text-cyan-400">فتح المجلد</button>
+    <button id="dw-close" onclick="closeWindow()" class="ms-auto px-4 py-2 rounded-xl text-xs text-gray-400 hover:text-white hover:bg-white/5">إخفاء</button>
+  </div>
+
+  <script src="/static/js/format.js"></script>
+  <script src="/static/js/download.js"></script>
+</body>
+</html>

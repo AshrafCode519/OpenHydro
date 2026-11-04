@@ -169,6 +169,7 @@ def create_app(
     on_show_window: Optional[Callable[[], None]] = None,
     listening_on_network: bool = True,
     clipboard=None,
+    on_download_started: Optional[Callable[[Any], None]] = None,
 ) -> FastAPI:
     from .websocket import TelemetryHub
 
@@ -306,7 +307,7 @@ def create_app(
         return task.to_dict()
 
     @app.post("/api/tasks")
-    async def add_task(req: AddTaskRequest):
+    async def add_task(req: AddTaskRequest, request: Request):
         ensure_inside_download_dir(req.save_dir)
         task = await engine.add_download(
             url=req.url,
@@ -318,6 +319,13 @@ def create_app(
             auto_start=req.auto_start,
             format_id=req.format_id,
         )
+        # The add dialog and the browser extension on this PC (not the phone, not playlists, which
+        # have their own endpoint): the desktop app shows the download's progress window
+        if on_download_started and req.auto_start and request.client and request.client.host in LOOPBACK_HOSTS:
+            try:
+                on_download_started(task)
+            except Exception as e:
+                print(f"[API] Download window: {e}")
         return task.to_dict()
 
     @app.post("/api/tasks/{task_id}/pause")

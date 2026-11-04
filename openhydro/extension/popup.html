@@ -52,6 +52,18 @@
     .btn:hover {
       opacity: 0.9;
     }
+    .capture {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 12px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .capture input {
+      width: auto;
+      margin: 0;
+    }
     input {
       width: 100%;
       padding: 8px;
@@ -73,6 +85,11 @@
     <div id="status-dot" class="dot"></div>
     <span id="status-text">جاري فحص الاتصال بالمحرك...</span>
   </div>
+
+  <label class="capture">
+    <input type="checkbox" id="capture-toggle" />
+    <span>التقاط تحميلات المتصفح تلقائياً (برامج، فيديو، أرشيفات...)</span>
+  </label>
 
   <input type="text" id="link-input" placeholder="ألصق رابط التحميل هنا..." />
   <button id="send-btn" class="btn">إرسال إلى OpenHydro</button>

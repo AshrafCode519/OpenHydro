@@ -19,11 +19,11 @@
   <!-- Built by `npm run build:css` (tailwind.config.js). After style.css: Tailwind's classes win, as before -->
   <link rel="stylesheet" href="/static/css/tailwind.css">
 </head>
-<body class="bg-[#0b0f19] text-gray-100 min-h-screen flex flex-col overflow-hidden">
+<body class="bg-[#0b0f19] text-gray-100 h-screen h-dvh flex flex-col overflow-hidden">
   <div class="bg-mesh"></div>
 
   <!-- Top Navigation Bar -->
-  <header class="h-16 border-b border-white/10 glass-panel flex items-center justify-between px-6 z-20">
+  <header class="relative shrink-0 whitespace-nowrap h-16 border-b border-white/10 glass-panel flex items-center justify-between px-3 md:px-6 z-20">
     <div class="flex items-center gap-4">
       <div class="flex items-center gap-3">
         <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center glow-cyan">
@@ -33,55 +33,63 @@
           <h1 class="font-bold text-lg tracking-wider bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent">
             OpenHydro
           </h1>
-          <p class="text-xs text-gray-400">Next-Gen Dynamic Download Manager</p>
+          <p class="hidden xl:block text-xs text-gray-400">Next-Gen Dynamic Download Manager</p>
         </div>
       </div>
 
       <!-- Live Speed Badge -->
       <div class="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-full bg-cyan-950/40 border border-cyan-500/20 text-cyan-400 text-xs font-mono font-medium">
         <i data-lucide="activity" class="w-3.5 h-3.5"></i>
-        <span>السرعة الإجمالية:</span>
+        <span class="hidden xl:inline">السرعة الإجمالية:</span>
         <span id="global-speed-display" class="font-bold">0.0 KB/s</span>
       </div>
     </div>
 
     <!-- Center / Actions -->
-    <div class="flex items-center gap-3">
+    <div class="flex items-center gap-2">
       <!-- Add Download Button -->
       <button onclick="openAddModal()" class="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-medium shadow-lg shadow-cyan-500/20 transition-all hover:scale-105 active:scale-95 text-sm">
         <i data-lucide="plus-circle" class="w-4 h-4"></i>
         <span>تنزيل جديد</span>
       </button>
 
+      <!-- Narrow windows and phones: the other actions open from this menu -->
+      <button id="header-menu-btn" onclick="toggleHeaderMenu()" title="المزيد" class="lg:hidden p-2 rounded-xl glass-panel glass-panel-hover text-gray-300">
+        <i data-lucide="menu" class="w-5 h-5"></i>
+      </button>
+
+      <!-- Wide: part of the header row (display: contents). Narrow: a panel under the header -->
+      <div id="header-actions" class="hidden lg:contents absolute top-full inset-x-0 z-40 grid-cols-2 sm:grid-cols-3 gap-2 p-3 bg-[#0b0f19] border-b border-white/10 shadow-2xl">
+
       <!-- Playlist & Google Drive Download Button (Snaptube/Vidmate style) -->
       <button onclick="openPlaylistModal()" title="تحميل قائمة تشغيل كاملة أو مجلد Google Drive (Playlists & Google Drive Folders)" class="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-medium shadow-lg shadow-purple-500/25 transition-all hover:scale-105 active:scale-95 text-xs">
         <i data-lucide="folder-down" class="w-4 h-4"></i>
-        <span>تحميل Playlist / Drive</span>
+        <span class="lg:hidden wide:inline">تحميل Playlist / Drive</span>
       </button>
 
       <!-- Settings Button -->
       <button onclick="openSettingsModal()" title="الإعدادات" class="flex items-center gap-2 px-3 py-2 rounded-xl glass-panel glass-panel-hover text-xs text-gray-300">
         <i data-lucide="settings" class="w-4 h-4 text-cyan-400"></i>
-        <span>الإعدادات</span>
+        <span class="lg:hidden wide:inline">الإعدادات</span>
       </button>
 
       <!-- Scheduler & Queues Button -->
       <button onclick="openSchedulerModal()" title="إدارة الطوابير والجدولة الذكية" class="flex items-center gap-2 px-3 py-2 rounded-xl glass-panel glass-panel-hover text-xs text-gray-300">
         <i data-lucide="clock" class="w-4 h-4 text-purple-400"></i>
-        <span>الجدولة والطوابير</span>
+        <span class="lg:hidden wide:inline">الجدولة والطوابير</span>
       </button>
 
       <!-- Browser Extension Button -->
       <button onclick="openExtensionModal()" title="تثبيت إضافة المتصفح لصيد الفيديوهات والتحميلات" class="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-600/30 to-teal-600/30 hover:from-emerald-600/50 hover:to-teal-600/50 border border-emerald-500/40 text-emerald-300 hover:text-emerald-100 font-semibold shadow-lg shadow-emerald-500/10 transition-all hover:scale-105 active:scale-95 text-xs">
         <i data-lucide="puzzle" class="w-4 h-4 text-emerald-400"></i>
-        <span>إضافة المتصفح</span>
+        <span class="lg:hidden wide:inline">إضافة المتصفح</span>
         <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
       </button>
 
       <!-- Check Updates Button -->
       <button onclick="checkAppUpdates(true)" id="nav-update-btn" title="التحقق من وجود إصدارات وتحديثات جديدة" class="flex items-center gap-1.5 px-3 py-2 rounded-xl glass-panel glass-panel-hover text-xs text-gray-300 relative transition-all hover:scale-105 active:scale-95">
         <i data-lucide="refresh-cw" class="w-4 h-4 text-cyan-400" id="nav-update-icon"></i>
-        <span>التحديثات</span>
+        <span class="lg:hidden wide:inline">التحديثات</span>
         <span id="nav-update-badge" class="hidden absolute -top-1 -right-1 flex h-2.5 w-2.5">
           <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
           <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-cyan-500"></span>
@@ -91,16 +99,16 @@
       <!-- Mobile Remote Control Button -->
       <button onclick="openMobileRemoteModal()" title="التحكم الكامل عبر الموبايل عن بُعد بنفس شبكة Wi-Fi" class="flex items-center gap-1.5 px-3 py-2 rounded-xl glass-panel glass-panel-hover text-xs text-amber-300 border border-amber-500/30 transition-all hover:scale-105 active:scale-95">
         <i data-lucide="smartphone" class="w-4 h-4 text-amber-400"></i>
-        <span>الموبايل</span>
+        <span class="lg:hidden wide:inline">الموبايل</span>
       </button>
 
       <!-- Speed Limiter Quick Menu -->
       <div class="relative group">
-        <button id="limiter-btn" class="flex items-center gap-2 px-3 py-2 rounded-xl glass-panel glass-panel-hover text-xs text-gray-300">
+        <button id="limiter-btn" title="محدد السرعة" class="flex items-center gap-2 px-3 py-2 rounded-xl glass-panel glass-panel-hover text-xs text-gray-300">
           <i data-lucide="gauge" class="w-4 h-4 text-cyan-400"></i>
-          <span id="limiter-status-text">بدون تحديد</span>
+          <span id="limiter-status-text" class="lg:hidden wide:inline">بدون تحديد</span>
         </button>
-        <div class="absolute right-0 mt-2 w-48 glass-panel rounded-xl p-2 hidden group-hover:block shadow-xl border border-white/10 z-50">
+        <div class="absolute right-0 mt-2 w-48 whitespace-normal glass-panel rounded-xl p-2 hidden group-hover:block shadow-xl border border-white/10 z-50">
           <p class="text-[10px] text-gray-400 px-2 py-1 uppercase font-semibold">محدد السرعة الذكي</p>
           <button onclick="setSpeedLimit(0)" class="w-full text-right px-2 py-1.5 rounded-lg text-xs hover:bg-white/5 flex justify-between items-center">
             <span>أقصى سرعة (بدون تحديد)</span>
@@ -113,9 +121,10 @@
       </div>
 
       <!-- Settings / System Info -->
-      <div class="flex items-center gap-2 text-xs text-gray-400 px-3 py-1.5 glass-panel rounded-xl">
+      <div class="flex lg:hidden xl:flex items-center gap-2 text-xs text-gray-400 px-3 py-1.5 glass-panel rounded-xl">
         <i data-lucide="hard-drive" class="w-4 h-4 text-blue-400"></i>
         <span id="disk-free-display">القرص: جاري الحساب...</span>
+      </div>
       </div>
     </div>
   </header>
@@ -123,7 +132,7 @@
   <!-- Main Workspace -->
   <div class="flex-1 flex overflow-hidden">
     <!-- Sidebar -->
-    <aside class="w-64 border-l border-white/10 glass-panel flex flex-col p-4 gap-6 shrink-0">
+    <aside class="hidden md:flex w-64 border-l border-white/10 glass-panel flex-col p-4 gap-6 shrink-0">
       <div>
         <p class="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-2 px-2">الحالة والمهام</p>
         <nav class="space-y-1">
@@ -201,15 +210,27 @@
     </aside>
 
     <!-- Main Content List -->
-    <main class="flex-1 flex flex-col overflow-hidden bg-slate-950/40 p-6">
+    <main class="flex-1 min-w-0 flex flex-col overflow-hidden bg-slate-950/40 p-3 md:p-6">
       <!-- Toolbar / Search -->
-      <div class="flex items-center justify-between mb-4">
-        <div class="relative w-80">
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-3 md:mb-4">
+        <div class="relative w-full md:w-80">
           <i data-lucide="search" class="w-4 h-4 absolute right-3 top-3 text-gray-400"></i>
           <input type="text" id="search-input" oninput="renderTasks()" placeholder="بحث في قائمة التحميلات..." class="w-full pr-10 pl-4 py-2 rounded-xl glass-panel text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-cyan-500">
         </div>
 
-        <div class="flex items-center gap-2">
+        <div class="flex items-center gap-2 w-full md:w-auto">
+          <select id="category-select" onchange="setCategoryFilter(this.value)" class="md:hidden flex-1 min-w-0 px-3 py-1.5 rounded-lg bg-slate-900 border border-white/10 text-xs text-gray-200 focus:outline-none focus:border-cyan-500">
+            <option value="all">كافة التنزيلات</option>
+            <option value="downloading">قيد التنزيل</option>
+            <option value="completed">المكتملة</option>
+            <option value="paused">المتوقفة مؤقتاً</option>
+            <option value="video">فيديو</option>
+            <option value="audio">صوت وموسيقى</option>
+            <option value="compressed">ملفات مضغوطة</option>
+            <option value="document">مستندات</option>
+            <option value="program">برامج وتطبيقات</option>
+            <option value="torrent">ملفات وتورنت (Torrents)</option>
+          </select>
           <button onclick="resumeAllTasks()" class="px-3 py-1.5 rounded-lg glass-panel text-xs hover:bg-white/5 flex items-center gap-1.5 text-emerald-400">
             <i data-lucide="play" class="w-3.5 h-3.5"></i>
             <span>استئناف الكل</span>
@@ -234,7 +255,7 @@
 
   <!-- Add Download Modal -->
   <div id="add-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center hidden p-4">
-    <div class="glass-panel w-full max-w-xl rounded-2xl p-6 border border-white/10 shadow-2xl space-y-4">
+    <div class="glass-panel w-full max-h-[90vh] overflow-y-auto max-w-xl rounded-2xl p-6 border border-white/10 shadow-2xl space-y-4">
       <div class="flex items-center justify-between border-b border-white/10 pb-3">
         <div class="flex items-center gap-2 text-cyan-400 font-semibold">
           <i data-lucide="download" class="w-5 h-5"></i>
@@ -418,8 +439,8 @@
   </div>
 
   <!-- Refresh URL Modal (IDM Smart Address Refresh) -->
-  <div id="refresh-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center hidden">
-    <div class="glass-panel w-full max-w-lg rounded-2xl p-6 border border-white/10 shadow-2xl space-y-4">
+  <div id="refresh-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center hidden p-4">
+    <div class="glass-panel w-full max-h-[90vh] overflow-y-auto max-w-lg rounded-2xl p-6 border border-white/10 shadow-2xl space-y-4">
       <div class="flex items-center justify-between border-b border-white/10 pb-3">
         <div class="flex items-center gap-2 text-amber-400 font-semibold">
           <i data-lucide="refresh-cw" class="w-5 h-5"></i>
@@ -453,8 +474,8 @@
 
   <!-- Smart Scheduler & Queues Modal -->
   <!-- Settings Modal -->
-  <div id="settings-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center hidden">
-    <div class="glass-panel w-full max-w-lg rounded-2xl p-6 border border-white/10 shadow-2xl space-y-4">
+  <div id="settings-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center hidden p-4">
+    <div class="glass-panel w-full max-h-[90vh] overflow-y-auto max-w-lg rounded-2xl p-6 border border-white/10 shadow-2xl space-y-4">
       <div class="flex items-center justify-between border-b border-white/10 pb-3">
         <div class="flex items-center gap-2 text-cyan-400 font-semibold">
           <i data-lucide="settings" class="w-5 h-5"></i>
@@ -532,8 +553,8 @@
     </div>
   </div>
 
-  <div id="scheduler-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center hidden">
-    <div class="glass-panel w-full max-w-lg rounded-2xl p-6 border border-white/10 shadow-2xl space-y-4">
+  <div id="scheduler-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center hidden p-4">
+    <div class="glass-panel w-full max-h-[90vh] overflow-y-auto max-w-lg rounded-2xl p-6 border border-white/10 shadow-2xl space-y-4">
       <div class="flex items-center justify-between border-b border-white/10 pb-3">
         <div class="flex items-center gap-2 text-purple-400 font-semibold">
           <i data-lucide="clock" class="w-5 h-5"></i>
@@ -689,7 +710,7 @@
 
   <!-- Modern Luxury Update Modal -->
   <div id="update-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md hidden transition-all duration-200">
-    <div class="glass-panel w-full max-w-lg rounded-2xl p-6 border border-white/10 shadow-2xl flex flex-col space-y-4">
+    <div class="glass-panel w-full max-h-[90vh] overflow-y-auto max-w-lg rounded-2xl p-6 border border-white/10 shadow-2xl flex flex-col space-y-4">
       <div class="flex items-center justify-between border-b border-white/10 pb-3">
         <div class="flex items-center gap-2 text-cyan-400 font-semibold text-base">
           <i data-lucide="sparkles" class="w-5 h-5 text-cyan-400"></i>
@@ -756,7 +777,7 @@
 
   <!-- Mobile Remote Control Modal (QR Code & Wi-Fi URL) -->
   <div id="mobile-modal" class="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center hidden p-4">
-    <div class="glass-panel w-full max-w-md rounded-3xl p-6 border border-amber-500/30 shadow-2xl flex flex-col items-center text-center space-y-4">
+    <div class="glass-panel w-full max-h-[90vh] overflow-y-auto max-w-md rounded-3xl p-6 border border-amber-500/30 shadow-2xl flex flex-col items-center text-center space-y-4">
       <div class="flex items-center justify-between w-full border-b border-white/10 pb-3">
         <div class="flex items-center gap-2 text-amber-400 font-bold text-sm">
           <i data-lucide="smartphone" class="w-5 h-5 text-amber-400"></i>

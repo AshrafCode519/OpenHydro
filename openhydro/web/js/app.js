@@ -394,7 +394,7 @@ function renderTaskCard(task) {
   // Segment visualization html
   const chunksHtml = task.chunks && task.chunks.length > 0 ? `
     <div class="mt-3 pt-3 border-t border-white/5">
-      <div class="flex items-center justify-between text-[11px] text-gray-400 mb-1.5">
+      <div class="flex flex-wrap items-center justify-between gap-x-2 text-[11px] text-gray-400 mb-1.5">
         <div class="flex items-center gap-1.5">
           <i data-lucide="cpu" class="w-3.5 h-3.5 text-cyan-400"></i>
           <span>حالة الكتل المتزامنة (Dynamic Segmentation):</span>
@@ -412,10 +412,10 @@ function renderTaskCard(task) {
   ` : '';
 
   return `
-    <div class="glass-panel glass-panel-hover rounded-2xl p-4 transition-all">
-      <div class="flex items-start justify-between gap-4">
-        <!-- Icon & Title -->
-        <div class="flex items-start gap-3 flex-1 min-w-0">
+    <div class="glass-panel glass-panel-hover rounded-2xl p-3 sm:p-4 transition-all">
+      <div class="flex flex-wrap sm:flex-nowrap items-start justify-between gap-3 sm:gap-4">
+        <!-- Icon & Title (a row of its own on phones, the buttons go under it) -->
+        <div class="flex items-start gap-3 flex-1 basis-full sm:basis-0 min-w-0">
           <div class="w-10 h-10 rounded-xl bg-slate-800 flex items-center justify-center shrink-0 border border-white/5 text-cyan-400">
             <i data-lucide="${getCategoryIcon(task.category)}" class="w-5 h-5"></i>
           </div>
@@ -480,7 +480,7 @@ function renderTaskCard(task) {
         </div>
 
         <!-- Metadata footer -->
-        <div class="flex items-center justify-between text-xs text-gray-400 mt-2 font-mono">
+        <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs text-gray-400 mt-2 font-mono">
           <div class="flex items-center gap-3">
             <span class="text-gray-200 font-semibold">${task.progress_percent}%</span>
             <span>${formatBytes(task.downloaded_bytes)} / ${task.total_bytes ? formatBytes(task.total_bytes) : 'غير محدد'}</span>
@@ -514,8 +514,28 @@ function setCategoryFilter(cat) {
       btn.className = 'category-btn w-full flex items-center justify-between px-3 py-2 rounded-xl text-sm font-medium text-gray-300 hover:bg-white/5';
     }
   });
+  // The picker that replaces the sidebar on phones
+  const select = document.getElementById('category-select');
+  if (select) select.value = cat;
   renderTasks();
 }
+
+// Narrow windows and phones: the header's secondary actions open as a panel under it
+function toggleHeaderMenu(open) {
+  const panel = document.getElementById('header-actions');
+  const show = open === undefined ? panel.classList.contains('hidden') : open;
+  panel.classList.toggle('hidden', !show);
+  panel.classList.toggle('grid', show);
+}
+
+document.addEventListener('click', (event) => {
+  const panel = document.getElementById('header-actions');
+  if (!panel || panel.classList.contains('hidden')) return;
+  // Picking an action, or clicking anywhere outside the menu, closes it (the limiter keeps its own submenu)
+  const action = event.target.closest('#header-actions button[onclick]');
+  const inside = event.target.closest('#header-actions, #header-menu-btn');
+  if (action || !inside) toggleHeaderMenu(false);
+});
 
 // Task Actions
 async function pauseTask(id) {

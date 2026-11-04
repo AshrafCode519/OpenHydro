@@ -1,6 +1,7 @@
 // OpenHydro Modern Dashboard Controller
 
 let tasks = {};
+const renderedRows = new Map();  // task id -> { el, html }: the rows currently in the list
 let currentCategory = 'all';
 let currentSearch = '';
 let ws = null;
@@ -256,7 +257,10 @@ async function fetchSystemInfo() {
     const data = await res.json();
     const diskElem = document.getElementById('disk-free-display');
     if (diskElem) {
-      diskElem.innerText = `المساحة الحرة: ${formatBytes(data.disk_free_bytes)}`;
+      // null: the download folder's drive is not available (e.g. an unplugged external disk)
+      diskElem.innerText = data.disk_free_bytes == null
+        ? 'المساحة الحرة: غير متاحة'
+        : `المساحة الحرة: ${formatBytes(data.disk_free_bytes)}`;
     }
   } catch (e) {
     console.error('Failed to fetch system info:', e);
@@ -286,13 +290,14 @@ function renderTasks() {
   });
 
   if (filtered.length === 0) {
+    renderedRows.clear();
     container.innerHTML = `
       <div class="flex flex-col items-center justify-center h-64 text-gray-500 gap-3">
         <i data-lucide="inbox" class="w-12 h-12 stroke-[1.5]"></i>
         <p class="text-sm">لا توجد تنزيلات متطابقة</p>
       </div>
     `;
-    lucide.createIcons();
+    lucide.createIcons({ root: container });
     return;
   }
 
@@ -303,8 +308,37 @@ function renderTasks() {
     return b.created_at - a.created_at;
   });
 
-  container.innerHTML = filtered.map(task => renderTaskCard(task)).join('');
-  lucide.createIcons();
+  // Rows are keyed by task id and only rebuilt when their HTML changes: a progress tick replaces the
+  // downloading rows and leaves the rest alone (no lost hover, no icons re-created page-wide)
+  const shown = new Set(filtered.map(task => task.id));
+  for (const [id, row] of renderedRows) {
+    if (!shown.has(id)) {
+      row.el.remove();
+      renderedRows.delete(id);
+    }
+  }
+  for (const el of [...container.children]) {
+    if (!el.dataset.taskId) el.remove();  // the "no downloads" placeholder
+  }
+
+  let previous = null;
+  for (const task of filtered) {
+    const html = renderTaskCard(task);
+    let row = renderedRows.get(task.id);
+    if (!row || row.html !== html) {
+      const template = document.createElement('template');
+      template.innerHTML = html.trim();
+      const el = template.content.firstElementChild;
+      el.dataset.taskId = task.id;
+      lucide.createIcons({ root: el });
+      if (row) row.el.replaceWith(el);
+      row = { el, html };
+      renderedRows.set(task.id, row);
+    }
+    const expected = previous ? previous.nextElementSibling : container.firstElementChild;
+    if (row.el !== expected) container.insertBefore(row.el, expected);
+    previous = row.el;
+  }
 }
 
 function renderTaskCard(task) {

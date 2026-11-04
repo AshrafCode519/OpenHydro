@@ -39,6 +39,8 @@ jobs:
         shell: bash
         env:
           PYTHONIOENCODING: utf-8
+          # The runner's clipboard is disposable; locally these tests would replace the user's clipboard
+          OPENHYDRO_CLIPBOARD_TESTS: "1"
         run: |
           pip install ruff
           ruff check --select F821,F822,F823 run.py openhydro tests

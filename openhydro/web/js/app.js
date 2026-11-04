@@ -166,6 +166,8 @@ function initWebSocket() {
 
   ws.onopen = () => {
     console.log('[OpenHydro WS] Connected to Telemetry Hub');
+    // A link copied while this page was closed or disconnected (e.g. started with Windows)
+    loadClipboardOffer();
   };
 
   ws.onmessage = (event) => {
@@ -191,6 +193,11 @@ function handleWebSocketMessage(msg) {
     data.forEach(t => { tasks[t.id] = t; });
   } else if (type === 'task_added' || type === 'task_updated' || type === 'task_progress' || type === 'task_completed' || type === 'task_error') {
     tasks[data.id] = data;
+    // The copied link was added another way (e.g. captured by the browser extension)
+    if (type === 'task_added' && clipboardOffer && clipboardOffer.url === data.url) hideClipboardOffer();
+  } else if (type === 'clipboard_link' || type === 'clipboard_open') {
+    showClipboardOffer(data);
+    return;
   } else if (type === 'task_cancelled') {
     delete tasks[data.id];
   } else if (type === 'auto_shutdown_triggered') {
@@ -1026,6 +1033,7 @@ async function openSettingsModal() {
     document.getElementById('set-default-connections').value = String(s.default_connections);
     document.getElementById('set-auto-resume').checked = s.auto_resume;
     document.getElementById('set-notify').checked = s.notify_on_complete;
+    document.getElementById('set-clipboard').checked = s.clipboard_monitor;
     document.getElementById('set-remote').checked = s.remote_access;
     // null: only the installed app can register itself to start with Windows
     const autostart = document.getElementById('set-autostart');
@@ -1049,6 +1057,7 @@ async function saveSettings() {
     default_connections: parseInt(document.getElementById('set-default-connections').value, 10),
     auto_resume: document.getElementById('set-auto-resume').checked,
     notify_on_complete: document.getElementById('set-notify').checked,
+    clipboard_monitor: document.getElementById('set-clipboard').checked,
     remote_access: document.getElementById('set-remote').checked,
   };
   if (!autostart.disabled) changes.start_with_windows = autostart.checked;
@@ -1070,6 +1079,50 @@ async function saveSettings() {
     }
   } catch (e) {
     showToast('لم يتم الحفظ: ' + e.message, 'error', 6000);
+  }
+}
+
+// --- Clipboard monitoring: a download link copied anywhere, waiting for the user ---
+// This PC only: the phone remote shares this dashboard but not the PC's clipboard
+const IS_LOCAL_DASHBOARD = ['127.0.0.1', 'localhost'].includes(window.location.hostname);
+let clipboardOffer = null;
+
+function showClipboardOffer(offer) {
+  if (!IS_LOCAL_DASHBOARD || !offer) return;
+  // open: the user clicked the Windows notification, so go straight to the add dialog
+  if (offer.open) {
+    acceptClipboardOffer(offer);
+    return;
+  }
+  clipboardOffer = offer;
+  document.getElementById('clipboard-offer-name').textContent = offer.filename || offer.url;
+  document.getElementById('clipboard-offer').classList.remove('hidden');
+  lucide.createIcons();
+}
+
+function hideClipboardOffer() {
+  clipboardOffer = null;
+  document.getElementById('clipboard-offer').classList.add('hidden');
+}
+
+function dismissClipboardOffer() {
+  hideClipboardOffer();
+  fetch('/api/clipboard/dismiss', { method: 'POST' }).catch(() => {});
+}
+
+function acceptClipboardOffer(offer = clipboardOffer) {
+  if (!offer) return;
+  dismissClipboardOffer();
+  openAddModal(offer.url);
+}
+
+async function loadClipboardOffer() {
+  if (!IS_LOCAL_DASHBOARD) return;
+  try {
+    const { link } = await (await fetch('/api/clipboard')).json();
+    if (link) showClipboardOffer(link);
+  } catch (e) {
+    // Older server or not reachable yet: the next WebSocket event brings it
   }
 }
 

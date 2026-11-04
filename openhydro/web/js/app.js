@@ -1,6 +1,7 @@
 // OpenHydro Modern Dashboard Controller
 
 let tasks = {};
+const renderedRows = new Map();  // task id -> { el, html }: the rows currently in the list
 let currentCategory = 'all';
 let currentSearch = '';
 let ws = null;
@@ -166,6 +167,8 @@ function initWebSocket() {
 
   ws.onopen = () => {
     console.log('[OpenHydro WS] Connected to Telemetry Hub');
+    // A link copied while this page was closed or disconnected (e.g. started with Windows)
+    loadClipboardOffer();
   };
 
   ws.onmessage = (event) => {
@@ -191,6 +194,11 @@ function handleWebSocketMessage(msg) {
     data.forEach(t => { tasks[t.id] = t; });
   } else if (type === 'task_added' || type === 'task_updated' || type === 'task_progress' || type === 'task_completed' || type === 'task_error') {
     tasks[data.id] = data;
+    // The copied link was added another way (e.g. captured by the browser extension)
+    if (type === 'task_added' && clipboardOffer && clipboardOffer.url === data.url) hideClipboardOffer();
+  } else if (type === 'clipboard_link' || type === 'clipboard_open') {
+    showClipboardOffer(data);
+    return;
   } else if (type === 'task_cancelled') {
     delete tasks[data.id];
   } else if (type === 'auto_shutdown_triggered') {
@@ -249,7 +257,10 @@ async function fetchSystemInfo() {
     const data = await res.json();
     const diskElem = document.getElementById('disk-free-display');
     if (diskElem) {
-      diskElem.innerText = `المساحة الحرة: ${formatBytes(data.disk_free_bytes)}`;
+      // null: the download folder's drive is not available (e.g. an unplugged external disk)
+      diskElem.innerText = data.disk_free_bytes == null
+        ? 'المساحة الحرة: غير متاحة'
+        : `المساحة الحرة: ${formatBytes(data.disk_free_bytes)}`;
     }
   } catch (e) {
     console.error('Failed to fetch system info:', e);
@@ -279,13 +290,14 @@ function renderTasks() {
   });
 
   if (filtered.length === 0) {
+    renderedRows.clear();
     container.innerHTML = `
       <div class="flex flex-col items-center justify-center h-64 text-gray-500 gap-3">
         <i data-lucide="inbox" class="w-12 h-12 stroke-[1.5]"></i>
         <p class="text-sm">لا توجد تنزيلات متطابقة</p>
       </div>
     `;
-    lucide.createIcons();
+    lucide.createIcons({ root: container });
     return;
   }
 
@@ -296,8 +308,37 @@ function renderTasks() {
     return b.created_at - a.created_at;
   });
 
-  container.innerHTML = filtered.map(task => renderTaskCard(task)).join('');
-  lucide.createIcons();
+  // Rows are keyed by task id and only rebuilt when their HTML changes: a progress tick replaces the
+  // downloading rows and leaves the rest alone (no lost hover, no icons re-created page-wide)
+  const shown = new Set(filtered.map(task => task.id));
+  for (const [id, row] of renderedRows) {
+    if (!shown.has(id)) {
+      row.el.remove();
+      renderedRows.delete(id);
+    }
+  }
+  for (const el of [...container.children]) {
+    if (!el.dataset.taskId) el.remove();  // the "no downloads" placeholder
+  }
+
+  let previous = null;
+  for (const task of filtered) {
+    const html = renderTaskCard(task);
+    let row = renderedRows.get(task.id);
+    if (!row || row.html !== html) {
+      const template = document.createElement('template');
+      template.innerHTML = html.trim();
+      const el = template.content.firstElementChild;
+      el.dataset.taskId = task.id;
+      lucide.createIcons({ root: el });
+      if (row) row.el.replaceWith(el);
+      row = { el, html };
+      renderedRows.set(task.id, row);
+    }
+    const expected = previous ? previous.nextElementSibling : container.firstElementChild;
+    if (row.el !== expected) container.insertBefore(row.el, expected);
+    previous = row.el;
+  }
 }
 
 function renderTaskCard(task) {
@@ -696,6 +737,9 @@ async function setSpeedLimit(kbps) {
 function openAddModal(prefillUrl = '') {
   const modal = document.getElementById('add-modal');
   modal.classList.remove('hidden');
+  if (appSettings) {
+    document.getElementById('modal-connections-select').value = String(appSettings.default_connections);
+  }
   const input = document.getElementById('modal-url-input');
   if (prefillUrl) {
     input.value = prefillUrl;
@@ -1002,11 +1046,127 @@ if (dropZone) {
   });
 }
 
+// --- Settings ---
+let appSettings = null;
+
+async function loadSettings() {
+  const res = await fetch('/api/settings');
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  appSettings = await res.json();
+  return appSettings;
+}
+
+async function openSettingsModal() {
+  document.getElementById('settings-modal').classList.remove('hidden');
+  lucide.createIcons();
+  try {
+    const s = await loadSettings();
+    const dirInput = document.getElementById('set-download-dir');
+    dirInput.value = s.download_dir || '';
+    dirInput.placeholder = s.effective_download_dir;
+    document.getElementById('set-default-connections').value = String(s.default_connections);
+    document.getElementById('set-auto-resume').checked = s.auto_resume;
+    document.getElementById('set-notify').checked = s.notify_on_complete;
+    document.getElementById('set-clipboard').checked = s.clipboard_monitor;
+    document.getElementById('set-remote').checked = s.remote_access;
+    // null: only the installed app can register itself to start with Windows
+    const autostart = document.getElementById('set-autostart');
+    autostart.checked = !!s.start_with_windows;
+    autostart.disabled = s.start_with_windows === null;
+    document.getElementById('set-autostart-note').classList.toggle('hidden', s.start_with_windows !== null);
+  } catch (e) {
+    showToast('تعذر تحميل الإعدادات: ' + e.message, 'error');
+  }
+}
+
+function closeSettingsModal() {
+  document.getElementById('settings-modal').classList.add('hidden');
+  if (window.location.hash === '#settings') history.replaceState(null, '', window.location.pathname);
+}
+
+async function saveSettings() {
+  const autostart = document.getElementById('set-autostart');
+  const changes = {
+    download_dir: document.getElementById('set-download-dir').value.trim() || null,
+    default_connections: parseInt(document.getElementById('set-default-connections').value, 10),
+    auto_resume: document.getElementById('set-auto-resume').checked,
+    notify_on_complete: document.getElementById('set-notify').checked,
+    clipboard_monitor: document.getElementById('set-clipboard').checked,
+    remote_access: document.getElementById('set-remote').checked,
+  };
+  if (!autostart.disabled) changes.start_with_windows = autostart.checked;
+
+  try {
+    const res = await fetch('/api/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(changes),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'HTTP ' + res.status);
+    appSettings = data;
+    closeSettingsModal();
+    if (data.restart_required) {
+      showToast('تم الحفظ. أعد تشغيل البرنامج لتفعيل التحكم من الموبايل', 'warning', 7000);
+    } else {
+      showToast('تم حفظ الإعدادات', 'success');
+    }
+  } catch (e) {
+    showToast('لم يتم الحفظ: ' + e.message, 'error', 6000);
+  }
+}
+
+// --- Clipboard monitoring: a download link copied anywhere, waiting for the user ---
+// This PC only: the phone remote shares this dashboard but not the PC's clipboard
+const IS_LOCAL_DASHBOARD = ['127.0.0.1', 'localhost'].includes(window.location.hostname);
+let clipboardOffer = null;
+
+function showClipboardOffer(offer) {
+  if (!IS_LOCAL_DASHBOARD || !offer) return;
+  // open: the user clicked the Windows notification, so go straight to the add dialog
+  if (offer.open) {
+    acceptClipboardOffer(offer);
+    return;
+  }
+  clipboardOffer = offer;
+  document.getElementById('clipboard-offer-name').textContent = offer.filename || offer.url;
+  document.getElementById('clipboard-offer').classList.remove('hidden');
+  lucide.createIcons();
+}
+
+function hideClipboardOffer() {
+  clipboardOffer = null;
+  document.getElementById('clipboard-offer').classList.add('hidden');
+}
+
+function dismissClipboardOffer() {
+  hideClipboardOffer();
+  fetch('/api/clipboard/dismiss', { method: 'POST' }).catch(() => {});
+}
+
+function acceptClipboardOffer(offer = clipboardOffer) {
+  if (!offer) return;
+  dismissClipboardOffer();
+  openAddModal(offer.url);
+}
+
+async function loadClipboardOffer() {
+  if (!IS_LOCAL_DASHBOARD) return;
+  try {
+    const { link } = await (await fetch('/api/clipboard')).json();
+    if (link) showClipboardOffer(link);
+  } catch (e) {
+    // Older server or not reachable yet: the next WebSocket event brings it
+  }
+}
+
 // Initialization
 window.addEventListener('DOMContentLoaded', () => {
   initWebSocket();
   fetchSystemInfo();
   setInterval(fetchSystemInfo, 10000);
+  loadSettings().catch(() => {});
+  if (window.location.hash === '#settings') openSettingsModal();
 
   // Check URL params for auto-opening playlist modal
   const urlParams = new URLSearchParams(window.location.search);
@@ -1554,7 +1714,13 @@ async function openMobileRemoteModal() {
     const data = await res.json();
     const urlText = document.getElementById('mobile-remote-url-text');
     const qrImg = document.getElementById('mobile-qr-image');
-    if (urlText) urlText.innerText = data.url;
+    // Phone control is off by default; it also needs a restart to start listening on the network
+    const blocked = !data.enabled
+      ? 'التحكم من الموبايل متوقف. فعّله من الإعدادات.'
+      : (!data.listening ? 'أعد تشغيل OpenHydro لتفعيل التحكم من الموبايل.' : null);
+    if (qrImg) qrImg.classList.toggle('hidden', !!blocked);
+    if (urlText) urlText.innerText = blocked || data.url;
+    if (blocked) return;
     // Generated locally: the URL carries the remote-control token and must not go to a third-party QR service
     if (qrImg && typeof qrcode === 'function') {
       const qr = qrcode(0, 'M');

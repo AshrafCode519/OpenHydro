@@ -1,0 +1,13 @@
+{
+  "name": "openhydro-web",
+  "private": true,
+  "description": "Build tools for the OpenHydro dashboard; running the app needs no Node.js",
+  "scripts": {
+    "build:css": "tailwindcss -c tailwind.config.js -i openhydro/web/css/tailwind.input.css -o openhydro/web/css/tailwind.css --minify",
+    "watch:css": "tailwindcss -c tailwind.config.js -i openhydro/web/css/tailwind.input.css -o openhydro/web/css/tailwind.css --watch",
+    "test": "node --test tests/extension/"
+  },
+  "devDependencies": {
+    "tailwindcss": "3.4.17"
+  }
+}

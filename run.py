@@ -49,11 +49,11 @@ from openhydro.core import DownloadEngine, TaskStatus, SystemTrayManager
 import openhydro
 from openhydro.core import ytdlp_updater
 from openhydro.core.instance import InstanceLock, ask_running_instance_to_show
+from openhydro.core.clipboard import ClipboardWatcher
 from openhydro.api import create_app
 
 # OPENHYDRO_PORT only exists for development/testing next to an installed copy
 PORT = int(os.environ.get("OPENHYDRO_PORT", "8765"))
-SERVER_BIND_HOST = "0.0.0.0"
 LOCAL_URL = f"http://127.0.0.1:{PORT}"
 
 
@@ -68,7 +68,9 @@ def cleanup(engine: DownloadEngine, tray: SystemTrayManager = None):
             pass
     for task in list(engine.tasks.values()):
         if task.status == TaskStatus.DOWNLOADING:
-            task.status = TaskStatus.PAUSED
+            # Interrupted by closing the app (not paused by the user): back in the queue,
+            # so it continues on the next start when auto-resume is on
+            task.status = TaskStatus.QUEUED
             engine.store.save(task)
 
 
@@ -84,14 +86,15 @@ def wait_for_server(host: str, port: int, timeout: float = 12.0) -> bool:
     return False
 
 
-def start_server(engine: DownloadEngine, on_show_window=None):
+def start_server(engine: DownloadEngine, bind_host: str, on_show_window=None, clipboard=None):
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        app = create_app(engine, on_show_window=on_show_window)
+        app = create_app(engine, on_show_window=on_show_window, listening_on_network=bind_host != "127.0.0.1",
+                         clipboard=clipboard)
         config = uvicorn.Config(
             app,
-            host=SERVER_BIND_HOST,
+            host=bind_host,
             port=PORT,
             log_level="warning",
             access_log=False,
@@ -133,13 +136,15 @@ def main():
     if ytdlp_version:
         print(f"[OpenHydro] Using updated yt-dlp {ytdlp_version}")
 
+    engine = DownloadEngine()
+    # Only this PC can reach the server unless phone/LAN control is turned on in the settings
+    bind_host = "0.0.0.0" if engine.settings.get("remote_access") else "127.0.0.1"
+
     print("=" * 60)
     print("[OpenHydro] Modern Dynamic Download Manager")
     print("[OpenHydro] Dynamic Segmentation Engine: Active")
-    print(f"[OpenHydro] Server listening on: {SERVER_BIND_HOST}:{PORT} (Local: {LOCAL_URL})")
+    print(f"[OpenHydro] Server listening on: {bind_host}:{PORT} (Local: {LOCAL_URL})")
     print("=" * 60)
-
-    engine = DownloadEngine()
     url = LOCAL_URL
 
     # State tracking for close-to-tray and clean exit
@@ -184,8 +189,22 @@ def main():
     )
     tray.start()
 
+    def notify_finished(event_type, payload):
+        if event_type == "task_completed" and engine.settings.get("notify_on_complete"):
+            tray.notify(f"✅ اكتمل التنزيل: {payload.get('filename', '')}", "OpenHydro")
+
+    engine.register_listener(notify_finished)
+
+    def offer_copied_link(offer):
+        # Clicking the notification opens the add dialog with the link (clipboard monitoring)
+        tray.notify(f"📋 {offer['filename'][:120]}\nاضغط هنا لتنزيله", "رابط تنزيل في الحافظة",
+                    on_click=lambda: (show_window_action(), clipboard.request_open()))
+
+    clipboard = ClipboardWatcher(engine, on_offer=offer_copied_link)
+
     # Start FastAPI server in a dedicated thread
-    server_thread = threading.Thread(target=start_server, args=(engine, show_window_action), daemon=True)
+    server_thread = threading.Thread(target=start_server, args=(engine, bind_host, show_window_action, clipboard),
+                                     daemon=True)
     server_thread.start()
 
     # Actively wait until the FastAPI TCP server is confirmed UP and responding!
@@ -195,6 +214,7 @@ def main():
 
     # Loads yt-dlp in the background (faster first video probe) and fetches a newer one daily
     ytdlp_updater.start_background(openhydro.__version__)
+    clipboard.start()
 
     def wait_until_interrupted():
         try:

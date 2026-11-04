@@ -49,8 +49,18 @@ class TestRestore(TaskStoreTestCase):
         self.assertEqual(restored.chunks[0].current_byte, 1024)
         self.assertEqual(restored.status, TaskStatus.PAUSED)
 
-    async def test_interrupted_download_comes_back_paused(self):
+    async def test_interrupted_download_goes_back_in_the_queue(self):
         task = self.saved_task(self.engine(), status=TaskStatus.DOWNLOADING)
+        self.assertEqual(self.engine().tasks[task.id].status, TaskStatus.QUEUED)
+
+    async def test_interrupted_download_stays_paused_without_auto_resume(self):
+        engine = self.engine()
+        engine.settings.update({"auto_resume": False})
+        task = self.saved_task(engine, status=TaskStatus.DOWNLOADING)
+        self.assertEqual(self.engine().tasks[task.id].status, TaskStatus.PAUSED)
+
+    async def test_download_paused_by_the_user_stays_paused(self):
+        task = self.saved_task(self.engine(), status=TaskStatus.PAUSED)
         self.assertEqual(self.engine().tasks[task.id].status, TaskStatus.PAUSED)
 
     async def test_error_and_message_are_kept(self):
@@ -66,7 +76,8 @@ class TestRestore(TaskStoreTestCase):
             f.write(b"partial")
         task = self.saved_task(self.engine(), url="magnet:?xt=urn:btih:abc", filename="ubuntu.iso",
                                save_path=path, is_torrent=True, status=TaskStatus.DOWNLOADING)
-        self.assertEqual(self.engine().tasks[task.id].status, TaskStatus.PAUSED)
+        # Back in the queue like any interrupted download: aria2 re-adds it and continues from its control file
+        self.assertEqual(self.engine().tasks[task.id].status, TaskStatus.QUEUED)
 
     async def test_saved_category_is_kept(self):
         task = self.saved_task(self.engine(), filename="talk.srt",

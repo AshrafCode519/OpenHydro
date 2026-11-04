@@ -22,12 +22,20 @@ body {
   user-select: none;
 }
 
-/* Glassmorphism card */
+/* Glassmorphism card. No backdrop-filter: over the flat page background it was invisible, yet
+   every animated pixel made the browser re-blur each panel per frame (one active download card
+   kept a software-rendered WebView2 at ~95% CPU). Modal overlays keep their blur. */
 .glass-panel {
   background: var(--bg-card);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--border-color);
+}
+
+/* Respect the OS "reduce animations" setting */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation: none !important;
+    transition: none !important;
+  }
 }
 
 .glass-panel-hover {

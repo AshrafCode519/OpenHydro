@@ -80,7 +80,7 @@ function showToast(message, type = 'success', duration = 3500) {
   toast.innerHTML = `
     <div class="flex items-center gap-3 overflow-hidden">
       <span class="app-toast-icon">${icon}</span>
-      <span class="truncate text-right leading-snug">${message}</span>
+      <span class="truncate text-right leading-snug">${escapeHtml(message)}</span>
     </div>
     <button class="app-toast-close" title="إغلاق">✕</button>
   `;
@@ -106,15 +106,24 @@ window.alert = function (msg) {
 // --- Modern Confirmation Modal System (Replaces ugly browser confirm) ---
 let confirmCallback = null;
 
-function showConfirm({ title = 'تأكيد الإجراء', message = 'هل أنت متأكد؟', okText = 'تأكيد', cancelText = 'إلغاء', onOk = null, isDanger = true }) {
+// onOk receives the state of the optional checkbox (shown only when checkboxLabel is given)
+function showConfirm({ title = 'تأكيد الإجراء', message = 'هل أنت متأكد؟', okText = 'تأكيد', cancelText = 'إلغاء', onOk = null, isDanger = true, checkboxLabel = null }) {
   const modal = document.getElementById('app-confirm-modal');
   if (!modal) {
-    if (confirm(message)) onOk?.();
+    if (confirm(message)) onOk?.(false);
     return;
   }
 
   document.getElementById('confirm-modal-title').innerText = title;
   document.getElementById('confirm-modal-msg').innerText = message;
+
+  const checkWrap = document.getElementById('confirm-modal-check-wrap');
+  const check = document.getElementById('confirm-modal-check');
+  if (checkWrap && check) {
+    check.checked = false;
+    document.getElementById('confirm-modal-check-label').innerText = checkboxLabel || '';
+    checkWrap.classList.toggle('hidden', !checkboxLabel);
+  }
 
   const okBtn = document.getElementById('confirm-modal-ok');
   const cancelBtn = document.getElementById('confirm-modal-cancel');
@@ -138,8 +147,9 @@ document.addEventListener('DOMContentLoaded', () => {
   if (okBtn) {
     okBtn.addEventListener('click', () => {
       const cb = confirmCallback;
+      const checked = !!document.getElementById('confirm-modal-check')?.checked;
       closeConfirmModal();
-      if (cb) cb();
+      if (cb) cb(checked);
     });
   }
   if (cancelBtn) {
@@ -179,7 +189,7 @@ function handleWebSocketMessage(msg) {
   if (type === 'snapshot') {
     tasks = {};
     data.forEach(t => { tasks[t.id] = t; });
-  } else if (type === 'task_added' || type === 'task_updated' || type === 'task_progress' || type === 'task_completed') {
+  } else if (type === 'task_added' || type === 'task_updated' || type === 'task_progress' || type === 'task_completed' || type === 'task_error') {
     tasks[data.id] = data;
   } else if (type === 'task_cancelled') {
     delete tasks[data.id];
@@ -187,8 +197,20 @@ function handleWebSocketMessage(msg) {
     handleShutdownNotification(data?.countdown || 60);
   }
 
-  updateGlobalStats();
-  renderTasks();
+  scheduleRender();
+}
+
+// Coalesce bursts of messages into one list rebuild per animation frame
+// (frames also pause while the window is hidden in the tray)
+let renderScheduled = false;
+function scheduleRender() {
+  if (renderScheduled) return;
+  renderScheduled = true;
+  requestAnimationFrame(() => {
+    renderScheduled = false;
+    updateGlobalStats();
+    renderTasks();
+  });
 }
 
 // Global Stats & Counters
@@ -283,12 +305,13 @@ function renderTaskCard(task) {
   const isCompleted = task.status === 'completed';
   const isPaused = task.status === 'paused';
   const isError = task.status === 'error';
+  const isQueued = task.status === 'queued';
 
   let statusBadge = '';
   if (isDownloading) {
     statusBadge = `
       <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-cyan-500/10 text-cyan-400 border border-cyan-500/30">
-        <span class="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping"></span>
+        <span class="w-1.5 h-1.5 rounded-full bg-cyan-400"></span>
         جاري التنزيل (${task.num_connections} مسارات)
       </span>
     `;
@@ -309,6 +332,13 @@ function renderTaskCard(task) {
     statusBadge = `
       <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/30">
         خطأ في التحميل
+      </span>
+    `;
+  } else if (isQueued) {
+    statusBadge = `
+      <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-slate-500/10 text-slate-300 border border-slate-500/30" title="سيبدأ تلقائياً عند انتهاء أحد التنزيلات الجارية">
+        <i data-lucide="clock" class="w-3 h-3"></i>
+        في الانتظار
       </span>
     `;
   }
@@ -355,6 +385,7 @@ function renderTaskCard(task) {
               ${torrentBadge}
             </div>
             <p class="text-xs text-gray-400 truncate mt-0.5 font-mono">${escapeHtml(task.url)}</p>
+            ${isError && task.error_message ? `<p class="text-[11px] text-rose-400 truncate mt-0.5" title="${escapeHtml(task.error_message)}">${escapeHtml(task.error_message)}</p>` : ''}
           </div>
         </div>
 
@@ -380,7 +411,7 @@ function renderTaskCard(task) {
             </button>
           ` : ''}
 
-          ${isDownloading ? `
+          ${(isDownloading || isQueued) ? `
             <button onclick="pauseTask('${task.id}')" title="إيقاف مؤقت" class="p-2 rounded-xl glass-panel hover:bg-white/10 text-amber-400 transition-colors">
               <i data-lucide="pause" class="w-4 h-4"></i>
             </button>
@@ -463,18 +494,23 @@ async function resumeTask(id) {
 }
 
 async function deleteTask(id) {
+  const finished = tasks[id]?.status === 'completed';
   showConfirm({
-    title: 'تأكيد حذف التنزيل',
-    message: 'هل تريد بالتأكيد إزالة هذا التنزيل من القائمة؟',
-    okText: 'نعم، حذف',
+    title: 'إزالة التنزيل',
+    message: finished
+      ? 'سيتم إزالة التنزيل من القائمة، ويبقى الملف كما هو على جهازك.'
+      : 'سيتم إيقاف التنزيل وإزالته من القائمة وحذف ملفاته المؤقتة.',
+    okText: 'إزالة',
     cancelText: 'إلغاء',
-    onOk: async () => {
+    checkboxLabel: 'حذف الملف من الجهاز أيضاً',
+    onOk: async (deleteFile) => {
       try {
-        await fetch(`/api/tasks/${id}?delete_file=true`, { method: 'DELETE' });
+        const res = await fetch(`/api/tasks/${id}?delete_file=${deleteFile ? 'true' : 'false'}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
         delete tasks[id];
         renderTasks();
         updateGlobalStats();
-        showToast('تم حذف التنزيل بنجاح', 'info');
+        showToast(deleteFile ? 'تم حذف التنزيل والملف من الجهاز' : 'تمت إزالة التنزيل من القائمة', 'info');
       } catch (e) {
         showToast('فشل حذف التنزيل: ' + e, 'error');
       }
@@ -482,16 +518,21 @@ async function deleteTask(id) {
   });
 }
 
+// Bulk actions go through the server queue so "resume all" honours the concurrent download limit
 async function pauseAllTasks() {
-  Object.values(tasks).forEach(t => {
-    if (t.status === 'downloading') pauseTask(t.id);
-  });
+  try {
+    await fetch('/api/queue/pause_all', { method: 'POST' });
+  } catch (e) {
+    console.error(e);
+  }
 }
 
 async function resumeAllTasks() {
-  Object.values(tasks).forEach(t => {
-    if (t.status === 'paused') resumeTask(t.id);
-  });
+  try {
+    await fetch('/api/queue/resume_all', { method: 'POST' });
+  } catch (e) {
+    console.error(e);
+  }
 }
 
 async function openTaskFile(id) {
@@ -1084,11 +1125,11 @@ function renderPlaylistItems(entries) {
   container.innerHTML = entries.map(item => `
     <div class="flex items-center gap-3 p-2 rounded-lg bg-white/5 hover:bg-white/10 transition-all border border-white/5">
       <input type="checkbox" class="playlist-item-checkbox rounded bg-slate-900 border-white/20 text-purple-600 focus:ring-0 cursor-pointer" 
-             data-index="${item.index}" data-url="${item.url}" data-download-url="${item.download_url || item.url}" data-is-gdrive="${item.is_gdrive ? 'true' : 'false'}" data-title="${encodeURIComponent(item.title)}" onchange="updatePlaylistSelectedCount()" checked>
-      <span class="text-xs font-mono text-purple-400 w-6 shrink-0">${item.index}.</span>
-      ${item.thumbnail ? `<img src="${item.thumbnail}" class="w-14 h-9 object-cover rounded border border-white/10 shrink-0" alt="">` : ''}
+             data-index="${Number(item.index)}" data-url="${escapeHtml(item.url)}" data-download-url="${escapeHtml(item.download_url || item.url)}" data-is-gdrive="${item.is_gdrive ? 'true' : 'false'}" data-title="${encodeURIComponent(item.title)}" onchange="updatePlaylistSelectedCount()" checked>
+      <span class="text-xs font-mono text-purple-400 w-6 shrink-0">${Number(item.index)}.</span>
+      ${item.thumbnail ? `<img src="${escapeHtml(item.thumbnail)}" class="w-14 h-9 object-cover rounded border border-white/10 shrink-0" alt="">` : ''}
       <div class="flex-1 min-w-0">
-        <p class="text-xs text-gray-200 font-medium truncate">${item.title}</p>
+        <p class="text-xs text-gray-200 font-medium truncate">${escapeHtml(item.title)}</p>
         ${item.duration ? `<span class="text-[10px] text-gray-500 font-mono">${Math.floor(item.duration / 60)}:${(item.duration % 60).toString().padStart(2, '0')}</span>` : ''}
       </div>
     </div>
@@ -1323,7 +1364,7 @@ function renderUpdateAvailable(data) {
   const body = document.getElementById('update-modal-body');
   const actions = document.getElementById('update-action-container');
 
-  const notesFormatted = (data.release_notes || 'تحديث يتضمن تحسينات عامة للأداء واستقرار التنزيل.')
+  const notesFormatted = escapeHtml(data.release_notes || 'تحديث يتضمن تحسينات عامة للأداء واستقرار التنزيل.')
     .replace(/^### (.*$)/gim, '<h5 class="font-bold text-xs text-cyan-300 mt-2">$1</h5>')
     .replace(/^## (.*$)/gim, '<h4 class="font-bold text-sm text-cyan-200 mt-2">$1</h4>')
     .replace(/^\* (.*$)/gim, '<li class="ml-2 text-gray-300">$1</li>')
@@ -1337,7 +1378,7 @@ function renderUpdateAvailable(data) {
             <i data-lucide="sparkles" class="w-5 h-5"></i>
           </div>
           <div>
-            <h4 class="text-sm font-bold text-white">${data.release_name}</h4>
+            <h4 class="text-sm font-bold text-white">${escapeHtml(data.release_name)}</h4>
             <div class="flex items-center gap-2 mt-0.5 text-xs">
               <span class="text-gray-400 font-mono">الإصدار الحالي: v${data.current_version}</span>
               <span class="text-gray-600">•</span>
@@ -1514,8 +1555,12 @@ async function openMobileRemoteModal() {
     const urlText = document.getElementById('mobile-remote-url-text');
     const qrImg = document.getElementById('mobile-qr-image');
     if (urlText) urlText.innerText = data.url;
-    if (qrImg) {
-      qrImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(data.url)}`;
+    // Generated locally: the URL carries the remote-control token and must not go to a third-party QR service
+    if (qrImg && typeof qrcode === 'function') {
+      const qr = qrcode(0, 'M');
+      qr.addData(data.url);
+      qr.make();
+      qrImg.src = qr.createDataURL(6, 2);
     }
   } catch (e) {
     console.error('Failed to load remote info:', e);

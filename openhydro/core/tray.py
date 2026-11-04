@@ -15,7 +15,7 @@ try:
     import pystray
     from pystray import MenuItem as item
     PYSTRAY_AVAILABLE = True
-except ImportError:
+except Exception:  # Not only ImportError: on headless Linux pystray fails to find a display
     PYSTRAY_AVAILABLE = False
 
 
@@ -48,6 +48,12 @@ class SystemTrayManager:
         # Fallback 16x16 cyan image
         return Image.new("RGBA", (16, 16), (6, 182, 212, 255))
 
+    def _submit(self, coro):
+        try:
+            self.engine.submit(coro)
+        except RuntimeError as e:
+            print(f"[Tray] {e}")
+
     def notify(self, message: str, title: str = "OpenHydro"):
         """Displays a native Windows notification balloon from the tray icon."""
         if self.icon and hasattr(self.icon, "notify"):
@@ -66,17 +72,12 @@ class SystemTrayManager:
             else:
                 webbrowser.open("http://127.0.0.1:8765")
 
+        # Menu callbacks run on the tray thread: hand the work to the server's event loop
         def pause_all_action(icon, item):
-            for t in list(self.engine.tasks.values()):
-                if t.status == "downloading":
-                    import asyncio
-                    asyncio.run(self.engine.pause_task(t.id))
+            self._submit(self.engine.pause_all())
 
         def resume_all_action(icon, item):
-            for t in list(self.engine.tasks.values()):
-                if t.status in ("paused", "error"):
-                    import asyncio
-                    asyncio.run(self.engine.resume_task(t.id))
+            self._submit(self.engine.resume_all())
 
         def exit_action(icon, item):
             icon.stop()

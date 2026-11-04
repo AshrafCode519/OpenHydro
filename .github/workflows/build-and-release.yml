@@ -6,6 +6,10 @@ on:
       - main
     tags:
       - 'v*'
+  # Lint, tests and both builds run on every PR before it can reach main (releases stay tag-only)
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -17,10 +21,10 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -31,12 +35,21 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
+      - name: Lint (undefined names) and Run Tests
+        shell: bash
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          pip install ruff
+          ruff check --select F821,F822,F823 run.py openhydro tests
+          python -m unittest discover -s tests -v
+
       - name: Build Executable with PyInstaller
         run: |
           pyinstaller --clean --noconfirm openhydro.spec
 
       - name: Compile Windows Setup Installer with Inno Setup
-        uses: Minionguyjpro/Inno-Setup-Action@v1.2.2
+        uses: Minionguyjpro/Inno-Setup-Action@v1.2.9
         with:
           path: installer.iss
 
@@ -54,20 +67,20 @@ jobs:
           Get-ChildItem -Path "win_artifacts"
 
       - name: Upload Windows Artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: windows-release
           path: win_artifacts/*
 
   build-linux:
     name: Build Linux Portable Package
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -107,7 +120,7 @@ jobs:
           tar -czvf ../OpenHydro-linux-x86_64.tar.gz OpenHydro
 
       - name: Upload Linux Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: linux-release
           path: OpenHydro-linux-x86_64.tar.gz
@@ -115,20 +128,20 @@ jobs:
   create-release:
     name: Publish GitHub Release
     needs: [build-windows, build-linux]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: startsWith(github.ref, 'refs/tags/')
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Download Windows Artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: windows-release
           path: release-files/
 
       - name: Download Linux Artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: linux-release
           path: release-files/
@@ -139,7 +152,7 @@ jobs:
           ls -la release-files/
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: release-files/*
           draft: false

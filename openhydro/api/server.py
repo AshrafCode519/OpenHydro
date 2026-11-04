@@ -4,17 +4,104 @@ Provides REST API endpoints and WebSocket telemetry.
 """
 
 import os
+import re
+import sys
 import shutil
 import asyncio
+import secrets
 from contextlib import asynccontextmanager
 from typing import Optional, Dict, Any, List
+from urllib.parse import parse_qs, urlparse
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field
+from starlette.datastructures import Headers, MutableHeaders
+from starlette.requests import cookie_parser
+from starlette.websockets import WebSocketClose
 
-from openhydro.core import DownloadEngine, TaskStatus
+from openhydro.core import DownloadEngine, TaskStatus, StorageManager
+from openhydro.core.security import load_or_create_secret, is_within_directory
+
+LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
+EXTENSION_ORIGIN_PATTERN = r"^(chrome-extension|moz-extension)://[A-Za-z0-9._-]+$"
+REMOTE_TOKEN_COOKIE = "openhydro_token"
+
+
+class LocalAccessGuard:
+    """
+    ASGI middleware guarding every HTTP and WebSocket request:
+    - Other devices on the network must present the remote-control token
+      (?token= from the QR link, the X-OpenHydro-Token header, or the cookie set on first visit).
+    - Local requests must address a loopback Host (blocks DNS rebinding).
+    - Browser requests must come from this app's own page or a browser extension,
+      so arbitrary websites cannot drive the downloader.
+    """
+
+    def __init__(self, app, token: str):
+        self.app = app
+        self.token = token
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] not in ("http", "websocket"):
+            await self.app(scope, receive, send)
+            return
+
+        headers = Headers(scope=scope)
+        host_header = headers.get("host", "")
+        request_host = host_header.rsplit(":", 1)[0].strip("[]").lower()
+        client_host = scope["client"][0] if scope.get("client") else ""
+
+        query = parse_qs(scope.get("query_string", b"").decode("latin-1"))
+        query_token = (query.get("token") or [None])[0]
+        supplied = (
+            query_token
+            or headers.get("x-openhydro-token")
+            or cookie_parser(headers.get("cookie", "")).get(REMOTE_TOKEN_COOKIE)
+        )
+        authorized = bool(supplied) and secrets.compare_digest(supplied, self.token)
+
+        if client_host in LOOPBACK_HOSTS:
+            if request_host not in LOOPBACK_HOSTS and not authorized:
+                await self._reject(scope, receive, send, 403, "Host not allowed")
+                return
+        elif not authorized:
+            await self._reject(scope, receive, send, 401, "رمز التحكم عن بُعد مطلوب (امسح رمز QR من التطبيق)")
+            return
+
+        origin = headers.get("origin")
+        if origin and not self._origin_allowed(origin, host_header):
+            await self._reject(scope, receive, send, 403, "Origin not allowed")
+            return
+
+        if query_token and authorized and scope["type"] == "http":
+            send = self._with_token_cookie(send)
+        await self.app(scope, receive, send)
+
+    @staticmethod
+    def _origin_allowed(origin: str, host_header: str) -> bool:
+        if re.match(EXTENSION_ORIGIN_PATTERN, origin):
+            return True
+        parsed = urlparse(origin)
+        return parsed.scheme in ("http", "https") and parsed.netloc.lower() == host_header.lower()
+
+    def _with_token_cookie(self, send):
+        async def send_with_cookie(message):
+            if message["type"] == "http.response.start":
+                MutableHeaders(scope=message).append(
+                    "set-cookie",
+                    f"{REMOTE_TOKEN_COOKIE}={self.token}; Path=/; Max-Age=31536000; HttpOnly; SameSite=Strict",
+                )
+            await send(message)
+        return send_with_cookie
+
+    @staticmethod
+    async def _reject(scope, receive, send, status_code: int, detail: str):
+        if scope["type"] == "websocket":
+            await WebSocketClose(code=1008)(scope, receive, send)
+        else:
+            await JSONResponse({"detail": detail}, status_code=status_code)(scope, receive, send)
 
 
 class AddTaskRequest(BaseModel):
@@ -67,19 +154,20 @@ class UpdateDownloadRequest(BaseModel):
 
 
 class UpdateInstallRequest(BaseModel):
-    task_id: Optional[str] = None
-    file_path: Optional[str] = None
+    task_id: str
 
 
-def create_app(engine: DownloadEngine) -> FastAPI:
+def create_app(engine: DownloadEngine, remote_token: Optional[str] = None) -> FastAPI:
     from .websocket import TelemetryHub
 
     hub = TelemetryHub()
     app_state = {"loop": None}
+    remote_token = remote_token or load_or_create_secret("remote_token")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app_state["loop"] = asyncio.get_running_loop()
+        engine.attach_loop(app_state["loop"])
         await engine.scheduler.start()
         yield
         await engine.scheduler.stop()
@@ -93,14 +181,19 @@ def create_app(engine: DownloadEngine) -> FastAPI:
         response.headers["Access-Control-Allow-Private-Network"] = "true"
         return response
 
+    # Only the browser extension needs cross-origin access; the dashboard is same-origin
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
+        allow_origin_regex=EXTENSION_ORIGIN_PATTERN,
         allow_methods=["*"],
         allow_headers=["*"],
-        expose_headers=["*"],
     )
+    # Added last so it wraps everything (including CORS preflights and the WebSocket)
+    app.add_middleware(LocalAccessGuard, token=remote_token)
+
+    def ensure_inside_download_dir(save_dir: Optional[str]):
+        if save_dir and not is_within_directory(engine.download_dir, save_dir):
+            raise HTTPException(status_code=400, detail="مجلد الحفظ يجب أن يكون داخل مجلد التنزيلات")
 
     def engine_event_handler(event_type: str, task_dict: dict):
         running_loop = app_state["loop"]
@@ -196,6 +289,7 @@ def create_app(engine: DownloadEngine) -> FastAPI:
 
     @app.post("/api/tasks")
     async def add_task(req: AddTaskRequest):
+        ensure_inside_download_dir(req.save_dir)
         task = await engine.add_download(
             url=req.url,
             filename=req.filename,
@@ -224,6 +318,16 @@ def create_app(engine: DownloadEngine) -> FastAPI:
         await engine.resume_task(task_id)
         return {"status": "resuming"}
 
+    @app.post("/api/queue/pause_all")
+    async def pause_all_tasks():
+        await engine.pause_all()
+        return {"status": "paused"}
+
+    @app.post("/api/queue/resume_all")
+    async def resume_all_tasks():
+        await engine.resume_all()
+        return {"status": "resuming"}
+
     @app.post("/api/tasks/{task_id}/refresh_url")
     async def refresh_url(task_id: str, req: RefreshUrlRequest):
         task = engine.tasks.get(task_id)
@@ -245,11 +349,8 @@ def create_app(engine: DownloadEngine) -> FastAPI:
         task = engine.tasks.get(task_id)
         if not task:
             raise HTTPException(status_code=404, detail="Task not found")
-        await engine.cancel_task(task_id, delete_file=delete_file)
-        with engine._lock:
-            if task_id in engine.tasks:
-                del engine.tasks[task_id]
-        return {"status": "deleted"}
+        await engine.remove_task(task_id, delete_file=delete_file)
+        return {"status": "deleted", "file_deleted": delete_file}
 
     @app.post("/api/tasks/{task_id}/open_file")
     async def open_task_file(task_id: str):
@@ -296,7 +397,6 @@ def create_app(engine: DownloadEngine) -> FastAPI:
     @app.get("/api/tasks/{task_id}/preview_stream")
     async def preview_stream(task_id: str, request: Request):
         import mimetypes
-        from fastapi.responses import StreamingResponse
         task = engine.tasks.get(task_id)
         if not task:
             raise HTTPException(status_code=404, detail="المهمة غير موجودة")
@@ -469,7 +569,7 @@ def create_app(engine: DownloadEngine) -> FastAPI:
                 local_ip = "127.0.0.1"
 
         port = 8765
-        remote_url = f"http://{local_ip}:{port}"
+        remote_url = f"http://{local_ip}:{port}/?token={remote_token}"
         return {
             "ip": local_ip,
             "port": port,
@@ -493,6 +593,9 @@ def create_app(engine: DownloadEngine) -> FastAPI:
 
     @app.post("/api/updates/download")
     async def download_update(req: UpdateDownloadRequest):
+        from openhydro.core.updater import is_official_release_asset
+        if not is_official_release_asset(req.download_url):
+            raise HTTPException(status_code=400, detail="رابط التحديث يجب أن يكون من إصدارات OpenHydro الرسمية على GitHub")
         task = await engine.add_download(
             url=req.download_url,
             filename=req.filename,
@@ -504,12 +607,13 @@ def create_app(engine: DownloadEngine) -> FastAPI:
 
     @app.post("/api/updates/install")
     async def install_update(req: UpdateInstallRequest):
-        from openhydro.core.updater import UpdateChecker
-        target_path = req.file_path
-        if req.task_id and req.task_id in engine.tasks:
-            target_path = engine.tasks[req.task_id].save_path
+        from openhydro.core.updater import UpdateChecker, is_official_release_asset
+        task = engine.tasks.get(req.task_id)
+        if not task or task.status != TaskStatus.COMPLETED or not is_official_release_asset(task.url):
+            raise HTTPException(status_code=403, detail="يمكن تثبيت ملفات التحديث الرسمية المكتملة فقط")
 
-        if not target_path or not os.path.exists(target_path):
+        target_path = task.save_path
+        if not os.path.exists(target_path):
             raise HTTPException(status_code=404, detail="ملف التحديث غير موجود على القرص")
 
         success = UpdateChecker.launch_installer(target_path)
@@ -578,6 +682,8 @@ def create_app(engine: DownloadEngine) -> FastAPI:
     # Browser extension / Remote Push trigger
     @app.post("/api/remote/push")
     async def remote_push(req: AddTaskRequest):
+        ensure_inside_download_dir(req.save_dir)
+
         async def _async_add():
             try:
                 await engine.add_download(

@@ -10,11 +10,30 @@ import sys
 import asyncio
 import subprocess
 from typing import Dict, Optional, Tuple
+from urllib.parse import urlparse, unquote
 import httpx
+
+from .worker import shared_ssl_context_async
 
 REPO_OWNER = "AshrafCode519"
 REPO_NAME = "OpenHydro"
 GITHUB_API_BASE = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}"
+RELEASE_ASSET_PATH_PREFIX = f"/{REPO_OWNER}/{REPO_NAME}/releases/download/"
+
+
+def is_official_release_asset(url: Optional[str]) -> bool:
+    """True only for assets attached to this project's GitHub releases (the only files the updater may run)."""
+    if not url:
+        return False
+    parsed = urlparse(url)
+    path = unquote(parsed.path)
+    return (
+        parsed.scheme == "https"
+        and parsed.netloc.lower() == "github.com"
+        and path.startswith(RELEASE_ASSET_PATH_PREFIX)
+        and ".." not in path
+        and "\\" not in path
+    )
 
 
 def parse_version(v_str: str) -> Tuple[int, ...]:
@@ -49,7 +68,7 @@ class UpdateChecker:
 
         timeout = httpx.Timeout(10.0, connect=5.0)
         try:
-            async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+            async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, verify=await shared_ssl_context_async()) as client:
                 # 1. Try /releases/latest first
                 resp = await client.get(f"{GITHUB_API_BASE}/releases/latest", headers=headers)
                 

@@ -6,6 +6,7 @@ and stream assembly (direct TS concat + FFmpeg remuxing).
 
 import os
 import re
+import sys
 import shutil
 import asyncio
 import subprocess
@@ -14,7 +15,7 @@ from typing import List, Dict, Optional, Tuple
 import httpx
 
 from .limiter import RateLimiter
-from .worker import DEFAULT_USER_AGENT
+from .worker import DEFAULT_USER_AGENT, shared_ssl_context_async
 
 
 class HLSStreamParser:
@@ -35,7 +36,7 @@ class HLSStreamParser:
             **(headers or {}),
         }
 
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True, verify=await shared_ssl_context_async()) as client:
             resp = await client.get(url, headers=req_headers)
             if resp.status_code != 200:
                 raise ValueError(f"HTTP {resp.status_code} fetching playlist")
@@ -104,6 +105,10 @@ class HLSStreamParser:
                 "segments": segments,
                 "total_segments": len(segments),
                 "total_duration_seconds": total_duration,
+                # Segments that cannot simply be concatenated: they need decryption (AES-128)
+                # or an initialization segment (fMP4 via EXT-X-MAP)
+                "encrypted": any(line.startswith("#EXT-X-KEY") and "METHOD=NONE" not in line for line in lines),
+                "fmp4": any(line.startswith("#EXT-X-MAP") for line in lines),
             }
 
 
@@ -117,7 +122,8 @@ class HLSDownloader:
 
         # Common Windows locations
         potential_paths = [
-            os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\WinGet\Packages\Gyan.FFmpeg.Essentials_*\ffmpeg-*\bin\ffmpeg.exe"),
+            # Essentials and full winget builds (found even before PATH is refreshed by a re-login)
+            os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\WinGet\Packages\Gyan.FFmpeg*\ffmpeg-*\bin\ffmpeg.exe"),
             r"C:\Program Files\ffmpeg\bin\ffmpeg.exe",
             r"C:\ffmpeg\bin\ffmpeg.exe",
         ]
@@ -137,10 +143,11 @@ class HLSDownloader:
         rate_limiter: Optional[RateLimiter] = None,
         on_progress: Optional[callable] = None,
         is_cancelled: Optional[callable] = None,
-    ) -> List[str]:
+        headers: Optional[Dict[str, str]] = None,
+    ) -> List[Optional[str]]:
         """
         Downloads all segments concurrently into temp_dir.
-        Returns list of downloaded file paths in correct order.
+        Returns the segment paths in playlist order, with None for segments that could not be fetched.
         """
         os.makedirs(temp_dir, exist_ok=True)
         num_connections = max(1, min(num_connections, 16))
@@ -149,75 +156,89 @@ class HLSDownloader:
         total_segments = len(segments)
         completed_count = 0
         total_downloaded_bytes = 0
-        downloaded_files = [None] * total_segments
+        downloaded_files: List[Optional[str]] = [None] * total_segments
 
-        async def worker(idx: int, seg_info: Dict):
-            nonlocal completed_count, total_downloaded_bytes
-            if is_cancelled and is_cancelled():
-                return
+        timeout = httpx.Timeout(20.0, connect=10.0)
+        limits = httpx.Limits(max_connections=num_connections, max_keepalive_connections=num_connections)
+        # One pooled client for every segment (same headers/Referer the playlist needed)
+        async with httpx.AsyncClient(
+            timeout=timeout, follow_redirects=True, headers=headers, limits=limits, verify=await shared_ssl_context_async()
+        ) as client:
 
-            seg_path = os.path.join(temp_dir, f"segment_{idx:05d}.ts")
+            async def worker(idx: int, seg_info: Dict):
+                nonlocal completed_count, total_downloaded_bytes
+                if is_cancelled and is_cancelled():
+                    return
 
-            # Resume support: skip if already downloaded
-            if os.path.exists(seg_path) and os.path.getsize(seg_path) > 0:
-                downloaded_files[idx] = seg_path
-                completed_count += 1
-                total_downloaded_bytes += os.path.getsize(seg_path)
-                if on_progress:
-                    on_progress(completed_count, total_segments, total_downloaded_bytes)
-                return
+                seg_path = os.path.join(temp_dir, f"segment_{idx:05d}.ts")
+                tmp_path = seg_path + ".tmp"
 
-            async with semaphore:
-                retries = 3
-                for attempt in range(retries):
-                    try:
-                        timeout = httpx.Timeout(20.0, connect=10.0)
-                        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+                # Resume support: only fully received segments ever get their final name
+                if os.path.exists(seg_path) and os.path.getsize(seg_path) > 0:
+                    downloaded_files[idx] = seg_path
+                    completed_count += 1
+                    total_downloaded_bytes += os.path.getsize(seg_path)
+                    if on_progress:
+                        on_progress(completed_count, total_segments, total_downloaded_bytes)
+                    return
+
+                async with semaphore:
+                    retries = 3
+                    for attempt in range(retries):
+                        written = 0
+                        try:
                             async with client.stream("GET", seg_info["url"]) as resp:
                                 if resp.status_code == 200:
-                                    with open(seg_path, "wb") as f:
+                                    with open(tmp_path, "wb") as f:
                                         async for chunk in resp.aiter_bytes(chunk_size=32 * 1024):
                                             if is_cancelled and is_cancelled():
                                                 return
                                             if rate_limiter:
                                                 await rate_limiter.acquire(len(chunk))
                                             f.write(chunk)
+                                            written += len(chunk)
                                             total_downloaded_bytes += len(chunk)
 
+                                    os.replace(tmp_path, seg_path)
                                     downloaded_files[idx] = seg_path
                                     completed_count += 1
                                     if on_progress:
                                         on_progress(completed_count, total_segments, total_downloaded_bytes)
                                     return
-                    except Exception as e:
-                        if attempt == retries - 1:
-                            print(f"[HLS] Error segment {idx}: {e}")
-                        await asyncio.sleep(1.0)
+                                if attempt == retries - 1:
+                                    print(f"[HLS] Segment {idx}: HTTP {resp.status_code}")
+                        except Exception as e:
+                            total_downloaded_bytes -= written  # This attempt's bytes are discarded
+                            if attempt == retries - 1:
+                                print(f"[HLS] Error segment {idx}: {e}")
+                        if attempt < retries - 1:
+                            await asyncio.sleep(1.0)
 
-        tasks = [worker(i, seg) for i, seg in enumerate(segments)]
-        await asyncio.gather(*tasks)
+            await asyncio.gather(*(worker(i, seg) for i, seg in enumerate(segments)))
 
-        return [f for f in downloaded_files if f and os.path.exists(f)]
+        return downloaded_files
 
     @classmethod
-    def assemble_stream(cls, segment_files: List[str], final_path: str) -> bool:
+    def assemble_stream(cls, segment_files: List[str], final_path: str) -> Optional[str]:
         """
-        Concatenates all TS segments into the final video file.
-        Uses FFmpeg for fast remuxing into .mp4 if available, or direct binary concat.
+        Joins the TS segments. With FFmpeg they are remuxed into final_path (.mp4) without
+        re-encoding; without it (or if remuxing fails) the raw MPEG-TS bytes are concatenated into
+        a .ts file, because TS data named ".mp4" does not play in many players.
+        Returns the path actually written, or None. Blocking: call it off the event loop.
         """
         if not segment_files:
-            return False
+            return None
 
         ffmpeg_exe = cls.find_ffmpeg()
 
-        # If ffmpeg is available and target extension is .mp4, remux cleanly without re-encoding
         if ffmpeg_exe and final_path.lower().endswith(".mp4"):
             import uuid
             concat_list_path = os.path.join(os.path.dirname(final_path), f"concat_list_{uuid.uuid4().hex[:8]}.txt")
             try:
                 with open(concat_list_path, "w", encoding="utf-8") as f:
                     for seg in segment_files:
-                        safe_path = os.path.abspath(seg).replace("\\", "/")
+                        # concat demuxer quoting: a ' inside the path is written as '\''
+                        safe_path = os.path.abspath(seg).replace("\\", "/").replace("'", "'\\''")
                         f.write(f"file '{safe_path}'\n")
 
                 cmd = [
@@ -230,22 +251,30 @@ class HLSDownloader:
                     "-bsf:a", "aac_adtstoasc",
                     final_path
                 ]
-                res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                flags = subprocess.CREATE_NO_WINDOW if sys.platform.startswith("win") else 0
+                res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
+                                     errors="replace", creationflags=flags)
                 if res.returncode == 0:
-                    if os.path.exists(concat_list_path):
-                        os.remove(concat_list_path)
-                    return True
+                    return final_path
+                print(f"[HLS] FFmpeg remux failed (exit {res.returncode}). Falling back to TS concatenation...")
             except Exception as e:
-                print(f"[HLS] FFmpeg remux failed: {e}. Falling back to binary merge...")
+                print(f"[HLS] FFmpeg remux failed: {e}. Falling back to TS concatenation...")
+            finally:
+                if os.path.exists(concat_list_path):
+                    os.remove(concat_list_path)
+            if os.path.exists(final_path):
+                os.remove(final_path)  # Partial output of the failed remux
 
         # Native Direct Binary Concatenation (Always works without external dependencies)
+        target = final_path
+        if final_path.lower().endswith(".mp4"):
+            target = os.path.splitext(final_path)[0] + ".ts"
         try:
-            with open(final_path, "wb") as outfile:
+            with open(target, "wb") as outfile:
                 for seg in segment_files:
                     with open(seg, "rb") as infile:
                         shutil.copyfileobj(infile, outfile, length=64 * 1024)
-            return True
+            return target
         except Exception as e:
             print(f"[HLS] Direct concat error: {e}")
-            return False
-
+            return None

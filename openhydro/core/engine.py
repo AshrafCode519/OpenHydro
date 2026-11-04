@@ -5,7 +5,9 @@ Orchestrates downloads, queues, dynamic segmentation, state restoration, and tas
 
 import os
 import re
+import sys
 import time
+import shutil
 import asyncio
 import threading
 from urllib.parse import urlparse, unquote
@@ -14,64 +16,104 @@ import httpx
 
 from .task import DownloadTask, Chunk, TaskStatus
 from .segmenter import DynamicSegmenter
-from .storage import StorageManager
+from .storage import StorageManager, TaskStore
 from .limiter import RateLimiter
-from .worker import ChunkWorker, DEFAULT_USER_AGENT, MAX_RETRIES, RETRY_BACKOFF_BASE
+from .worker import ChunkWorker, DEFAULT_USER_AGENT, MAX_RETRIES, RETRY_BACKOFF_BASE, shared_ssl_context, shared_ssl_context_async
 from .hls import HLSStreamParser, HLSDownloader
 from .scheduler import SmartScheduler
 from .extractor import VideoExtractor
 from .torrent import TorrentManager
+from .security import sanitize_filename, get_app_data_dir
+
+# Minimum seconds between two progress events for the same task (status changes are immediate)
+PROGRESS_EVENT_INTERVAL = 0.25
+
+# Retrying these will not help (expired/forbidden link, missing file): give up after one more try
+PERMANENT_HTTP_ERRORS = {400, 401, 403, 404, 405, 410, 416, 451}
+PERMANENT_ERROR_RETRIES = 1
 
 
 class DownloadEngine:
-    def __init__(self, download_dir: Optional[str] = None):
+    def __init__(self, download_dir: Optional[str] = None, store_path: Optional[str] = None):
         self.download_dir = download_dir or StorageManager.get_default_download_dir()
+        self.store = TaskStore(store_path or os.path.join(get_app_data_dir(), "tasks.db"))
         self.tasks: Dict[str, DownloadTask] = {}
         self.rate_limiter = RateLimiter(0)  # Unlimited by default
         self._running_loops: Dict[str, asyncio.Task] = {}
         self._listeners: List[Callable] = []
+        self._last_progress_event: Dict[str, float] = {}
         self._lock = threading.Lock()
         self.scheduler = SmartScheduler(self)
         self.torrent_manager = TorrentManager(self.download_dir)
-        self.auto_shutdown_enabled = False
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+
+        # Load the CA bundle now, off the event loop: on a busy machine it takes seconds and
+        # would otherwise delay the first download (or probe) after every start
+        threading.Thread(target=shared_ssl_context, name="ssl-warmup", daemon=True).start()
 
         # Restore saved tasks from disk
         self._restore_persisted_tasks()
 
+    def attach_loop(self, loop: asyncio.AbstractEventLoop):
+        """Remembers the server event loop that owns every download coroutine."""
+        self._loop = loop
+
+    def submit(self, coro):
+        """
+        Runs an engine coroutine on the server loop from another thread (tray menu, GUI).
+        asyncio.run() there would start downloads on a throwaway loop that is closed immediately.
+        """
+        if not self._loop or not self._loop.is_running():
+            coro.close()
+            raise RuntimeError("Engine event loop is not running")
+        return asyncio.run_coroutine_threadsafe(coro, self._loop)
+
     def _restore_persisted_tasks(self):
-        """Scans download directory on startup and restores interrupted/completed tasks."""
+        """Restores interrupted/completed tasks from the task store on startup."""
         try:
-            persisted = StorageManager.scan_and_load_tasks(self.download_dir)
+            self._import_legacy_meta_files()
             with self._lock:
-                for task in persisted:
+                for task in self.store.load_all():
                     self.tasks[task.id] = task
         except Exception as e:
             print(f"[Engine] Error restoring tasks: {e}")
+
+    def _import_legacy_meta_files(self):
+        """One-time move of the old .hydro.meta sidecar files into the task store."""
+        marker = "legacy_meta_imported:" + os.path.normcase(os.path.abspath(self.download_dir))
+        if self.store.get_setting(marker):
+            return
+        for meta_path, task in StorageManager.scan_legacy_meta(self.download_dir):
+            self.store.save(task)
+            try:
+                os.remove(meta_path)
+            except OSError as e:
+                print(f"[Engine] Could not remove legacy metadata {meta_path}: {e}")
+        self.store.set_setting(marker, "1")
+
+    def close(self):
+        """Releases the task store (call on shutdown after the final saves)."""
+        self.store.close()
 
     def register_listener(self, callback: Callable):
         self._listeners.append(callback)
 
     def _notify(self, event_type: str, task: Any):
+        if event_type == "task_progress" and isinstance(task, DownloadTask):
+            # Every worker reports progress; with 32 connections that was dozens of full task
+            # snapshots per second. Status changes (updated/completed/error) are never throttled.
+            now = time.monotonic()
+            if now - self._last_progress_event.get(task.id, 0.0) < PROGRESS_EVENT_INTERVAL:
+                return
+            self._last_progress_event[task.id] = now
         payload = task.to_dict() if hasattr(task, "to_dict") else task
         for listener in self._listeners:
             try:
                 listener(event_type, payload)
             except Exception as e:
                 print(f"[Engine] Listener error: {e}")
-        if event_type == "task_completed":
-            self._check_auto_shutdown()
 
-    def _check_auto_shutdown(self):
-        """Checks if all tasks are finished and triggers auto-shutdown if enabled."""
-        if not getattr(self, "auto_shutdown_enabled", False):
-            return
-
-        with self._lock:
-            active = any(t.status == TaskStatus.DOWNLOADING for t in self.tasks.values())
-            if not active and len(self.tasks) > 0:
-                self._trigger_system_shutdown()
-
-    def _trigger_system_shutdown(self):
+    def trigger_system_shutdown(self):
         import subprocess
         try:
             if sys.platform.startswith("win"):
@@ -199,14 +241,18 @@ class DownloadEngine:
 
         try:
             timeout = httpx.Timeout(15.0, connect=10.0)
-            async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+            # Same encoding the workers use, so Content-Length is the size of the raw file
+            probe_headers = {"Accept-Encoding": "identity", **headers}
+            async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, verify=await shared_ssl_context_async()) as client:
                 # 1. Try HEAD request
-                resp = await client.head(url, headers=headers)
+                resp = await client.head(url, headers=probe_headers)
 
-                # If HEAD fails or gives no size, try GET with Range 0-0
+                # If HEAD fails or gives no size (signed S3/CDN links often reject HEAD), ask for the
+                # first byte only. Streamed and closed unread, so a server that ignores Range
+                # never pulls the whole file into memory.
                 if resp.status_code >= 400 or "content-length" not in resp.headers:
-                    headers["Range"] = "bytes=0-0"
-                    resp = await client.get(url, headers=headers)
+                    async with client.stream("GET", url, headers={**probe_headers, "Range": "bytes=0-0"}) as resp:
+                        pass
 
                 # Check Content-Disposition for filename
                 cd = resp.headers.get("content-disposition", "")
@@ -221,13 +267,13 @@ class DownloadEngine:
                 if "bytes" in accept_ranges or "bytes" in content_range:
                     supports_ranges = True
 
-                # Check Content-Length
-                if "content-length" in resp.headers:
+                # Total size: for a 206 the Content-Length is just the requested slice (1 byte),
+                # the real size is after the "/" in Content-Range
+                range_total = re.search(r"/(\d+)\s*$", content_range)
+                if resp.status_code == 206 and range_total:
+                    total_bytes = int(range_total.group(1))
+                elif resp.status_code < 400 and "content-length" in resp.headers:
                     total_bytes = int(resp.headers["content-length"])
-                elif "content-range" in resp.headers:
-                    match = re.search(r"/(\d+)", content_range)
-                    if match:
-                        total_bytes = int(match.group(1))
 
         except Exception as e:
             print(f"[Probe] Error probing URL {url}: {e}")
@@ -258,10 +304,10 @@ class DownloadEngine:
 
             if url.startswith("magnet:"):
                 minfo = TorrentManager.parse_magnet_info(url)
-                t_filename = filename or minfo["name"] or "Torrent_Download"
+                t_filename = sanitize_filename(filename or minfo["name"], "Torrent_Download")
                 t_total = minfo.get("total_size", 0)
             else:
-                t_filename = filename or os.path.basename(url) or "download.torrent"
+                t_filename = sanitize_filename(filename or os.path.basename(url), "download.torrent")
                 t_total = 0
 
             target_path = os.path.join(target_save_dir, t_filename)
@@ -281,11 +327,11 @@ class DownloadEngine:
             with self._lock:
                 self.tasks[task.id] = task
 
-            StorageManager.save_task_meta(task)
+            self.store.save(task)
             self._notify("task_added", task)
 
             if auto_start:
-                asyncio.create_task(self.start_task(task.id))
+                await self.enqueue_or_start(task.id)
 
             return task
 
@@ -293,7 +339,7 @@ class DownloadEngine:
         os.makedirs(save_dir, exist_ok=True)
 
         info = await self.probe_url(url, custom_headers)
-        raw_name = filename or info["filename"]
+        raw_name = sanitize_filename(filename or info["filename"])
 
         # Adjust file extension based on selected format
         if format_id == "audio_mp3":
@@ -332,10 +378,20 @@ class DownloadEngine:
         final_filename = raw_name
         target_path = os.path.join(save_dir, final_filename)
 
-        # Handle duplicate filenames
+        # Pick a name no existing file, partial download or unfinished task is using:
+        # two tasks sharing one .part file would overwrite each other's data
+        in_use = {
+            os.path.normcase(os.path.abspath(t.save_path))
+            for t in self.tasks.values()
+            if t.status not in (TaskStatus.COMPLETED, TaskStatus.CANCELLED)
+        }
         base, ext = os.path.splitext(target_path)
         counter = 1
-        while os.path.exists(target_path) and not os.path.exists(StorageManager.get_part_path(target_path)):
+        while (
+            os.path.normcase(os.path.abspath(target_path)) in in_use
+            or os.path.exists(target_path)
+            or os.path.exists(StorageManager.get_part_path(target_path))
+        ):
             target_path = f"{base}_{counter}{ext}"
             counter += 1
 
@@ -372,13 +428,30 @@ class DownloadEngine:
         with self._lock:
             self.tasks[task.id] = task
 
-        StorageManager.save_task_meta(task)
+        self.store.save(task)
         self._notify("task_added", task)
 
         if auto_start:
-            asyncio.create_task(self.start_task(task.id))
+            await self.enqueue_or_start(task.id)
 
         return task
+
+    def active_download_count(self) -> int:
+        return sum(1 for t in self.tasks.values() if t.status == TaskStatus.DOWNLOADING)
+
+    async def enqueue_or_start(self, task_id: str):
+        """
+        Starts the task now if fewer than max_active downloads are running, otherwise leaves it
+        QUEUED; the scheduler starts queued tasks as slots free up.
+        """
+        task = self.tasks.get(task_id)
+        if not task or task.status == TaskStatus.DOWNLOADING:
+            return
+        if self.active_download_count() < self.scheduler.max_active_downloads:
+            await self.start_task(task_id)
+        else:
+            task.status = TaskStatus.QUEUED
+            self._notify("task_updated", task)
 
     async def start_task(self, task_id: str):
         task = self.tasks.get(task_id)
@@ -421,120 +494,163 @@ class DownloadEngine:
         file_lock = asyncio.Lock()
         segmenter_lock = asyncio.Lock()
         workers: List[ChunkWorker] = []
+        chunk_failures: Dict[int, int] = {}
+        give_up_reason: Optional[str] = None
+        monitor_task: Optional[asyncio.Task] = None
+
+        def new_worker(worker_id: str) -> ChunkWorker:
+            worker = ChunkWorker(
+                worker_id=worker_id,
+                task=task,
+                file_path=part_path,
+                file_lock=file_lock,
+                rate_limiter=self.rate_limiter,
+                on_chunk_progress=lambda: self._notify("task_progress", task),
+            )
+            workers.append(worker)
+            return worker
+
+        def mark_completed():
+            for w in workers:
+                w.close_file()
+            task.status = TaskStatus.COMPLETED
+            task.completed_at = time.time()
+            task.speed = 0.0
+            task.eta_seconds = 0
+            StorageManager.finalize_download(task)
+            self._notify("task_completed", task)
+
+        def mark_failed(reason: Optional[str]):
+            task.status = TaskStatus.ERROR
+            task.speed = 0.0
+            task.eta_seconds = None
+            task.error_message = f"فشل التحميل ({reason or 'خطأ في الاتصال'})"
+            self._notify("task_error", task)
+
+        def retries_allowed(worker: ChunkWorker) -> int:
+            return PERMANENT_ERROR_RETRIES if worker.last_status in PERMANENT_HTTP_ERRORS else MAX_RETRIES
+
+        # Single stream mode for unknown size or non-range servers (restarts from byte 0 on each attempt)
+        async def single_stream_download():
+            worker = new_worker("Single")
+            if not task.chunks:
+                task.chunks = [Chunk(id=0, start_byte=0, end_byte=0, current_byte=0)]
+            chunk = task.chunks[0]
+
+            for attempt in range(MAX_RETRIES + 1):
+                if attempt:
+                    if attempt > retries_allowed(worker):
+                        break
+                    await asyncio.sleep(min(RETRY_BACKOFF_BASE ** attempt, 5.0))
+                if task.status != TaskStatus.DOWNLOADING:
+                    return
+                if await worker.run_single_stream(chunk):
+                    if task.status == TaskStatus.DOWNLOADING:
+                        mark_completed()
+                    return
+            if task.status == TaskStatus.DOWNLOADING:
+                mark_failed(worker.last_error)
+
+        # Multi-threaded Range Mode with Dynamic Segmentation
+        async def worker_supervisor(worker_id: int):
+            nonlocal give_up_reason
+            worker = new_worker(f"W{worker_id}")
+
+            while task.status == TaskStatus.DOWNLOADING:
+                target_chunk: Optional[Chunk] = None
+                async with segmenter_lock:
+                    # Find idle chunk
+                    for c in task.chunks:
+                        if c.status == "idle":
+                            target_chunk = c
+                            break
+
+                    # Or dynamically split largest running chunk
+                    if not target_chunk and task.supports_ranges:
+                        target_chunk = DynamicSegmenter.split_largest_chunk_unlocked(task)
+
+                    # Claim it before releasing the lock so no other worker takes the same chunk
+                    if target_chunk:
+                        target_chunk.status = "downloading"
+
+                if not target_chunk:
+                    break
+
+                success = await worker.run_for_chunk(target_chunk)
+                if worker.range_ignored:
+                    break  # Once all workers stop, the engine falls back to a single connection
+                if success or task.status != TaskStatus.DOWNLOADING:
+                    continue
+
+                # Retry the same chunk with backoff: network drops get MAX_RETRIES attempts,
+                # an expired or forbidden link (4xx) gives up quickly so the user can refresh it
+                failures = chunk_failures.get(target_chunk.id, 0) + 1
+                chunk_failures[target_chunk.id] = failures
+                if failures > retries_allowed(worker):
+                    target_chunk.status = "failed"
+                    give_up_reason = worker.last_error
+                    continue
+                await asyncio.sleep(min(RETRY_BACKOFF_BASE ** failures, 5.0))
+                if target_chunk.status == "failed":
+                    target_chunk.status = "idle"  # Hand it back so this or another worker retries it
+
+        # Speed monitor loop
+        async def speed_monitor():
+            last_bytes = task.downloaded_bytes
+            last_time = time.time()
+
+            while task.status == TaskStatus.DOWNLOADING:
+                await asyncio.sleep(0.5)
+                now = time.time()
+                current_bytes = task.downloaded_bytes
+                dt = now - last_time
+                if dt > 0:
+                    speed = (current_bytes - last_bytes) / dt
+                    task.speed = max(0.0, speed)
+                    last_bytes = current_bytes
+                    last_time = now
+
+                    # ETA calculation (unknown when the total size is unknown)
+                    if task.speed > 0 and task.total_bytes > 0:
+                        task.eta_seconds = int(max(0, task.total_bytes - current_bytes) / task.speed)
+                    else:
+                        task.eta_seconds = None
+
+                    self._notify("task_progress", task)
+                    self.store.save(task)
 
         try:
-            # 1. Single stream mode for unknown size or non-range servers
-            if not task.supports_ranges or task.total_bytes <= 0:
-                worker = ChunkWorker(
-                    worker_id="Single",
-                    task=task,
-                    file_path=part_path,
-                    file_lock=file_lock,
-                    rate_limiter=self.rate_limiter,
-                    on_chunk_progress=lambda: self._notify("task_progress", task),
-                )
-                workers.append(worker)
-
-                chunk = task.chunks[0] if task.chunks else Chunk(id=0, start_byte=0, end_byte=0, current_byte=0)
-                if not task.chunks:
-                    task.chunks = [chunk]
-
-                success = await worker.run_single_stream(chunk)
-                if success and task.status == TaskStatus.DOWNLOADING:
-                    task.status = TaskStatus.COMPLETED
-                    task.completed_at = time.time()
-                    task.speed = 0.0
-                    task.eta_seconds = 0
-                    StorageManager.finalize_download(task)
-                    self._notify("task_completed", task)
-                return
-
-            # 2. Multi-threaded Range Mode with Dynamic Segmentation
-            async def worker_supervisor(worker_id: int):
-                worker = ChunkWorker(
-                    worker_id=f"W{worker_id}",
-                    task=task,
-                    file_path=part_path,
-                    file_lock=file_lock,
-                    rate_limiter=self.rate_limiter,
-                    on_chunk_progress=lambda: self._notify("task_progress", task),
-                )
-                workers.append(worker)
-
-                retries = 0
-                while task.status == TaskStatus.DOWNLOADING:
-                    target_chunk: Optional[Chunk] = None
-                    async with segmenter_lock:
-                        # Find idle chunk
-                        for c in task.chunks:
-                            if c.status == "idle":
-                                target_chunk = c
-                                break
-
-                        # Or dynamically split largest running chunk
-                        if not target_chunk and task.supports_ranges:
-                            target_chunk = DynamicSegmenter.split_largest_chunk_unlocked(task)
-
-                    if not target_chunk:
-                        break
-
-                    success = await worker.run_for_chunk(target_chunk)
-                    if not success and task.status == TaskStatus.DOWNLOADING:
-                        retries += 1
-                        if retries > MAX_RETRIES:
-                            target_chunk.status = "failed"
-                            break
-                        backoff = RETRY_BACKOFF_BASE ** retries
-                        await asyncio.sleep(min(backoff, 5.0))
-                    else:
-                        retries = 0
-
-            # Speed monitor loop
-            async def speed_monitor():
-                last_bytes = task.downloaded_bytes
-                last_time = time.time()
-
-                while task.status == TaskStatus.DOWNLOADING:
-                    await asyncio.sleep(0.5)
-                    now = time.time()
-                    current_bytes = task.downloaded_bytes
-                    dt = now - last_time
-                    if dt > 0:
-                        speed = (current_bytes - last_bytes) / dt
-                        task.speed = max(0.0, speed)
-                        last_bytes = current_bytes
-                        last_time = now
-
-                        # ETA calculation
-                        rem = max(0, task.total_bytes - current_bytes)
-                        if task.speed > 0:
-                            task.eta_seconds = int(rem / task.speed)
-                        else:
-                            task.eta_seconds = None
-
-                        self._notify("task_progress", task)
-                        StorageManager.save_task_meta(task)
-
-            num_workers = task.num_connections if task.supports_ranges else 1
-            worker_tasks = [asyncio.create_task(worker_supervisor(i)) for i in range(num_workers)]
             monitor_task = asyncio.create_task(speed_monitor())
 
+            if not task.supports_ranges or task.total_bytes <= 0:
+                await single_stream_download()
+                return
+
+            worker_tasks = [asyncio.create_task(worker_supervisor(i)) for i in range(task.num_connections)]
             await asyncio.gather(*worker_tasks)
-            monitor_task.cancel()
 
             # Finalize status
-            if task.status == TaskStatus.DOWNLOADING:
-                all_done = all(c.status == "completed" or c.current_byte > c.end_byte for c in task.chunks)
-                if all_done:
-                    task.status = TaskStatus.COMPLETED
-                    task.completed_at = time.time()
-                    task.speed = 0.0
-                    task.eta_seconds = 0
-                    StorageManager.finalize_download(task)
-                    self._notify("task_completed", task)
-                else:
-                    task.status = TaskStatus.PAUSED
-                    self._notify("task_updated", task)
+            if task.status != TaskStatus.DOWNLOADING:
+                return
+
+            if any(w.range_ignored for w in workers):
+                # The server advertised Range support but ignores it: restart on one connection
+                print(f"[Engine] Server ignored Range requests for {task.filename}; falling back to a single connection")
+                task.supports_ranges = False
+                task.num_connections = 1
+                task.chunks = [Chunk(id=0, start_byte=0, end_byte=max(0, task.total_bytes - 1), current_byte=0)]
+                for w in workers:
+                    w.close_file()
+                await single_stream_download()
+                return
+
+            if all(c.status == "completed" or c.current_byte > c.end_byte for c in task.chunks):
+                mark_completed()
+            elif any(c.status == "failed" for c in task.chunks):
+                mark_failed(give_up_reason)
+            else:
+                task.status = TaskStatus.PAUSED
+                self._notify("task_updated", task)
 
         except asyncio.CancelledError:
             # Immediate cooperative cancel/pause
@@ -551,15 +667,17 @@ class DownloadEngine:
             self._notify("task_error", task)
 
         finally:
+            if monitor_task:
+                monitor_task.cancel()
             # Clean up all persistent worker HTTP clients
             for w in workers:
                 try:
                     await w.close()
                 except Exception:
                     pass
-            StorageManager.save_task_meta(task)
+            self.store.save(task)
 
-    async def _execute_extractor_download(self, task: DownloadTask):
+    async def _execute_extractor_download(self, task: DownloadTask, http_headers: Optional[Dict[str, str]] = None):
         """Downloads videos from platforms using yt-dlp with multi-threaded concurrent fragment streams."""
         num_conns = max(8, task.num_connections or 16)
         task.num_connections = num_conns
@@ -584,17 +702,22 @@ class DownloadEngine:
 
         try:
             fmt = task.selected_format or "bestvideo+bestaudio/best"
-            success = await VideoExtractor.download(
+            final_path = await VideoExtractor.download(
                 url=task.url,
                 output_path=task.save_path,
                 format_selector=fmt,
                 num_connections=num_conns,
                 on_progress=on_progress,
                 is_cancelled=lambda: task.status != TaskStatus.DOWNLOADING,
+                http_headers=http_headers,
             )
 
             if task.status == TaskStatus.DOWNLOADING:
-                if success:
+                if final_path:
+                    if final_path != task.save_path:
+                        # e.g. .webm when ffmpeg is missing, or "<title>.<lang>.srt": point at the real file
+                        task.save_path = final_path
+                        task.filename = os.path.basename(final_path)
                     task.status = TaskStatus.COMPLETED
                     task.completed_at = time.time()
                     task.speed = 0.0
@@ -610,7 +733,9 @@ class DownloadEngine:
                     task.error_message = "فشل تحميل الفيديو من المنصة"
                     self._notify("task_error", task)
         except asyncio.CancelledError:
-            task.status = TaskStatus.PAUSED
+            # Keep CANCELLED (set by cancel_task); only an interrupted download becomes PAUSED
+            if task.status == TaskStatus.DOWNLOADING:
+                task.status = TaskStatus.PAUSED
             self._notify("task_updated", task)
         except Exception as e:
             print(f"[Engine] VideoExtractor error: {e}")
@@ -618,14 +743,17 @@ class DownloadEngine:
             task.error_message = str(e)
             self._notify("task_error", task)
         finally:
-            StorageManager.save_task_meta(task)
+            self.store.save(task)
 
     async def _execute_hls_download(self, task: DownloadTask):
         """Executes HLS (.m3u8) stream downloading and remuxing."""
-        import shutil
-
         temp_dir = task.save_path + "_hls_temp"
         os.makedirs(temp_dir, exist_ok=True)
+
+        # Playlist, segments (and keys, via yt-dlp) all need the same headers as the page
+        hls_headers = {"User-Agent": DEFAULT_USER_AGENT, **task.custom_headers}
+        if task.referrer:
+            hls_headers["Referer"] = task.referrer
 
         try:
             # 1. Resolve media playlist
@@ -636,11 +764,18 @@ class DownloadEngine:
                     # Choose highest quality
                     playlist_url = qualities[0]["url"]
 
-            media_info = await HLSStreamParser.fetch_and_parse(playlist_url, task.custom_headers)
+            media_info = await HLSStreamParser.fetch_and_parse(playlist_url, hls_headers)
             if media_info.get("type") == "master":
                 # Nested master, resolve first quality
                 playlist_url = media_info["qualities"][0]["url"]
-                media_info = await HLSStreamParser.fetch_and_parse(playlist_url, task.custom_headers)
+                media_info = await HLSStreamParser.fetch_and_parse(playlist_url, hls_headers)
+
+            if media_info.get("encrypted") or media_info.get("fmp4"):
+                # Plain concatenation would produce an unplayable file: yt-dlp's HLS downloader
+                # handles AES-128 decryption and fMP4 init segments
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                await self._execute_extractor_download(task, http_headers=hls_headers)
+                return
 
             segments = media_info.get("segments", [])
             if not segments:
@@ -690,14 +825,25 @@ class DownloadEngine:
                 rate_limiter=self.rate_limiter,
                 on_progress=on_hls_progress,
                 is_cancelled=lambda: task.status != TaskStatus.DOWNLOADING,
+                headers=hls_headers,
             )
 
             if task.status != TaskStatus.DOWNLOADING:
                 return
 
-            # 3. Assemble stream into final video file
-            success = HLSDownloader.assemble_stream(downloaded, task.save_path)
-            if success:
+            # A gap in the segment list means a broken video: report it (resume retries only the missing ones)
+            missing = sum(1 for path in downloaded if not path)
+            if missing:
+                raise RuntimeError(f"تعذر تحميل {missing} من {total_segs} جزء من البث")
+
+            # 3. Assemble stream into final video file (FFmpeg runs off the event loop)
+            output_path = await asyncio.to_thread(HLSDownloader.assemble_stream, downloaded, task.save_path)
+            if output_path:
+                if output_path != task.save_path:
+                    # Without FFmpeg the stream is saved as .ts rather than mislabelled .mp4
+                    task.save_path = output_path
+                    task.filename = os.path.basename(output_path)
+                task.total_bytes = os.path.getsize(output_path)
                 task.status = TaskStatus.COMPLETED
                 task.completed_at = time.time()
                 task.speed = 0.0
@@ -715,7 +861,8 @@ class DownloadEngine:
                 raise RuntimeError("Failed to assemble downloaded HLS segments")
 
         except asyncio.CancelledError:
-            task.status = TaskStatus.PAUSED
+            if task.status == TaskStatus.DOWNLOADING:
+                task.status = TaskStatus.PAUSED
             task.speed = 0.0
             self._notify("task_updated", task)
         except Exception as e:
@@ -724,7 +871,7 @@ class DownloadEngine:
             task.error_message = str(e)
             self._notify("task_error", task)
         finally:
-            StorageManager.save_task_meta(task)
+            self.store.save(task)
 
     async def _execute_torrent_download(self, task: DownloadTask):
         """Downloads BitTorrent or Magnet links via embedded aria2 JSON-RPC engine."""
@@ -746,19 +893,31 @@ class DownloadEngine:
                     if os.path.exists(task.url):
                         gid = await self.torrent_manager.add_torrent_file(task.url, save_dir=target_save_dir)
                     else:
-                        async with httpx.AsyncClient(timeout=15.0) as client:
+                        async with httpx.AsyncClient(timeout=15.0, verify=await shared_ssl_context_async()) as client:
                             r = await client.get(task.url, follow_redirects=True)
                             r.raise_for_status()
                             gid = await self.torrent_manager.add_torrent_file(r.content, save_dir=target_save_dir)
                 else:
                     gid = await self.torrent_manager.add_magnet(task.url, save_dir=target_save_dir)
                 task.torrent_gid = gid
-                StorageManager.save_task_meta(task)
+                self.store.save(task)
+            else:
+                # Resumed manually or started from the queue: un-pause it in aria2
+                await self.torrent_manager.resume(task.torrent_gid)
 
             # Polling loop
+            unreachable_since: Optional[float] = None
             while task.status == TaskStatus.DOWNLOADING:
                 await asyncio.sleep(1.0)
-                status = await self.torrent_manager.tell_status(task.torrent_gid)
+                try:
+                    status = await self.torrent_manager.tell_status(task.torrent_gid)
+                    unreachable_since = None
+                except Exception:
+                    # aria2 busy or restarting: keep waiting, and only give up after half a minute
+                    unreachable_since = unreachable_since or time.time()
+                    if time.time() - unreachable_since > 30:
+                        raise
+                    continue
                 if not status:
                     # GID was lost from aria2c (e.g. app restarted) -> re-register download
                     try:
@@ -766,7 +925,7 @@ class DownloadEngine:
                             task.torrent_gid = await self.torrent_manager.add_magnet(task.url, save_dir=target_save_dir)
                         elif task.url.lower().endswith(".torrent") and os.path.exists(task.url):
                             task.torrent_gid = await self.torrent_manager.add_torrent_file(task.url, save_dir=target_save_dir)
-                        StorageManager.save_task_meta(task)
+                        self.store.save(task)
                     except Exception:
                         pass
                     continue
@@ -775,7 +934,7 @@ class DownloadEngine:
                 followed_by = status.get("followedBy")
                 if followed_by and len(followed_by) > 0:
                     task.torrent_gid = followed_by[0]
-                    StorageManager.save_task_meta(task)
+                    self.store.save(task)
                     continue
 
                 state = status.get("status")  # active, waiting, paused, error, complete, removed
@@ -797,8 +956,9 @@ class DownloadEngine:
 
                 # Check if torrent meta resolved real filename
                 bt_info = status.get("bittorrent", {}).get("info", {})
-                if bt_info.get("name") and bt_info["name"] != task.filename:
-                    task.filename = bt_info["name"]
+                bt_name = sanitize_filename(bt_info.get("name"), task.filename)
+                if bt_name != task.filename:
+                    task.filename = bt_name
                     task.save_path = os.path.join(target_save_dir, task.filename)
 
                 if speed > 0 and total_len > completed_len:
@@ -809,7 +969,7 @@ class DownloadEngine:
                 if state == "complete":
                     if status.get("followedBy"):
                         task.torrent_gid = status["followedBy"][0]
-                        StorageManager.save_task_meta(task)
+                        self.store.save(task)
                         continue
 
                     task.status = TaskStatus.COMPLETED
@@ -819,7 +979,7 @@ class DownloadEngine:
                     if task.chunks:
                         task.chunks[0].status = "completed"
                         task.chunks[0].current_byte = total_len
-                    StorageManager.save_task_meta(task)
+                    self.store.save(task)
                     self._notify("task_completed", task)
                     return
 
@@ -831,12 +991,14 @@ class DownloadEngine:
                     return
 
                 self._notify("task_progress", task)
-                StorageManager.save_task_meta(task)
+                self.store.save(task)
 
         except asyncio.CancelledError:
-            task.status = TaskStatus.PAUSED
+            if task.status == TaskStatus.DOWNLOADING:
+                task.status = TaskStatus.PAUSED
             task.speed = 0.0
-            if task.torrent_gid:
+            # A cancelled torrent was already removed from aria2 by cancel_task
+            if task.torrent_gid and task.status == TaskStatus.PAUSED:
                 await self.torrent_manager.pause(task.torrent_gid)
             self._notify("task_updated", task)
         except Exception as e:
@@ -845,11 +1007,16 @@ class DownloadEngine:
             task.error_message = str(e)
             self._notify("task_error", task)
         finally:
-            StorageManager.save_task_meta(task)
+            self.store.save(task)
 
     async def pause_task(self, task_id: str):
         task = self.tasks.get(task_id)
-        if task and task.status == TaskStatus.DOWNLOADING:
+        if task and task.status == TaskStatus.QUEUED:
+            # Hold a waiting task so the scheduler does not start it
+            task.status = TaskStatus.PAUSED
+            self.store.save(task)
+            self._notify("task_updated", task)
+        elif task and task.status == TaskStatus.DOWNLOADING:
             task.status = TaskStatus.PAUSED
             task.speed = 0.0
             task.eta_seconds = None
@@ -865,23 +1032,35 @@ class DownloadEngine:
             if loop_task and not loop_task.done():
                 loop_task.cancel()
 
-            StorageManager.save_task_meta(task)
+            self.store.save(task)
             self._notify("task_updated", task)
 
-    async def resume_task(self, task_id: str):
+    async def resume_task(self, task_id: str, respect_queue: bool = False):
+        """
+        Resumes a paused/failed task. A manual resume starts at once; bulk resumes
+        (tray "resume all", scheduled start) pass respect_queue to honour max_active.
+        """
         task = self.tasks.get(task_id)
         if task and task.status in (TaskStatus.PAUSED, TaskStatus.ERROR):
-            if task.is_torrent and task.torrent_gid:
-                try:
-                    await self.torrent_manager.resume(task.torrent_gid)
-                except Exception:
-                    pass
             # Reset chunk statuses from error/downloading to idle
             for c in task.chunks:
                 if c.status in ("failed", "downloading") or c.current_byte <= c.end_byte:
                     if c.status != "completed":
                         c.status = "idle"
-            await self.start_task(task_id)
+            if respect_queue:
+                await self.enqueue_or_start(task_id)
+            else:
+                await self.start_task(task_id)
+
+    async def pause_all(self):
+        for task in list(self.tasks.values()):
+            if task.status in (TaskStatus.DOWNLOADING, TaskStatus.QUEUED):
+                await self.pause_task(task.id)
+
+    async def resume_all(self):
+        for task in sorted(self.tasks.values(), key=lambda t: t.created_at):
+            if task.status in (TaskStatus.PAUSED, TaskStatus.ERROR):
+                await self.resume_task(task.id, respect_queue=True)
 
     async def refresh_task_url(self, task_id: str, new_url: str):
         """
@@ -901,7 +1080,7 @@ class DownloadEngine:
                 pass
 
         task.url = new_url
-        StorageManager.save_task_meta(task)
+        self.store.save(task)
         if task.status in (TaskStatus.PAUSED, TaskStatus.ERROR):
             await self.resume_task(task_id)
         return True
@@ -919,14 +1098,39 @@ class DownloadEngine:
             loop_task = self._running_loops.get(task_id)
             if loop_task and not loop_task.done():
                 loop_task.cancel()
+                # Let workers release their .part handles first (Windows cannot delete open files)
+                await asyncio.wait({loop_task}, timeout=5.0)
 
             if delete_file:
-                part_path = StorageManager.get_part_path(task.save_path)
-                meta_path = StorageManager.get_meta_path(task.save_path)
-                for p in [part_path, meta_path, task.save_path]:
-                    if os.path.exists(p):
-                        try:
-                            os.remove(p)
-                        except OSError:
-                            pass
+                paths = [StorageManager.get_part_path(task.save_path), task.save_path]
+                if task.is_torrent:
+                    paths.append(task.save_path + ".aria2")  # aria2 control file
+                for p in paths:
+                    # Multi-file torrents download into a folder
+                    self._remove_path(p, allow_dir=task.is_torrent)
             self._notify("task_cancelled", task)
+
+    async def remove_task(self, task_id: str, delete_file: bool = False):
+        """
+        Stops a task and forgets it. Its stored record and temporary .part are always removed so it
+        does not come back after a restart; the downloaded file itself is deleted only on request.
+        """
+        task = self.tasks.get(task_id)
+        if not task:
+            return
+        await self.cancel_task(task_id, delete_file=delete_file)
+        self._remove_path(StorageManager.get_part_path(task.save_path))
+        self.store.delete(task_id)
+        with self._lock:
+            self.tasks.pop(task_id, None)
+        self._running_loops.pop(task_id, None)
+
+    @staticmethod
+    def _remove_path(path: str, allow_dir: bool = False):
+        try:
+            if allow_dir and os.path.isdir(path):
+                shutil.rmtree(path)
+            elif os.path.isfile(path):
+                os.remove(path)
+        except OSError as e:
+            print(f"[Engine] Could not remove {path}: {e}")

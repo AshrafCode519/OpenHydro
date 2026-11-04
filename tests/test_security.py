@@ -116,6 +116,8 @@ class TestApiAccessGuard(unittest.TestCase):
         self.download_dir = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.download_dir, ignore_errors=True)
         self.engine = make_engine(self, self.download_dir)
+        # Phone/LAN control is off by default; these tests cover the token checks once it is on
+        self.engine.settings.update({"remote_access": True})
         self.app = create_app(self.engine, remote_token=TOKEN)
         self.local = TestClient(self.app, base_url="http://127.0.0.1:8765", client=("127.0.0.1", 50000))
 

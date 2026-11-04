@@ -3,7 +3,6 @@ Single-instance tests for OpenHydro
 A second launch must find the running instance's lock and ask it (over the local API) to show its window.
 """
 
-import os
 import socket
 import shutil
 import tempfile

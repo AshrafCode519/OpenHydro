@@ -32,8 +32,19 @@ class _FileHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
+    def _missing_login(self) -> bool:
+        """True (and answers 403) when the server wants a session cookie the request lacks."""
+        srv = self.server
+        if srv.required_cookie and self.headers.get("Cookie") != srv.required_cookie:
+            srv.requests_without_cookie += 1
+            self._empty(403)
+            return True
+        return False
+
     def do_HEAD(self):
         srv = self.server
+        if self._missing_login():
+            return
         if srv.mode == "no_head":
             return self._empty(405)
         if srv.mode == "always_500":
@@ -46,6 +57,8 @@ class _FileHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         srv = self.server
+        if self._missing_login():
+            return
         data = srv.payload
         start, end, partial = 0, len(data) - 1, False
         rng = self.headers.get("Range")
@@ -91,6 +104,8 @@ class _TestServer(ThreadingHTTPServer):
         self.stall_first_chunk = stall_first_chunk
         self.split_requested = threading.Event()
         self.flaky_left = 1
+        self.required_cookie = None
+        self.requests_without_cookie = 0
         self.failures_served = 0
         self._lock = threading.Lock()
 
@@ -204,6 +219,29 @@ class TestFailureHandling(EngineDownloadTestCase):
         task = await self.download(self.serve("always_500"))
         self.assertEqual(task.status, TaskStatus.ERROR)
         self.assertIn("HTTP 500", task.error_message)
+
+
+class TestBrowserSession(EngineDownloadTestCase):
+    """Downloads handed over by the browser extension carry the browser's cookies."""
+
+    async def test_cookie_is_sent_with_every_request(self):
+        url = self.serve()
+        self.server.required_cookie = "session=abc"
+        engine = make_engine(self, self.download_dir)
+        task = await engine.add_download(url, num_connections=4, auto_start=False,
+                                         custom_headers={"Cookie": "session=abc", "User-Agent": "TestBrowser/1.0"})
+        await engine.start_task(task.id)
+        await asyncio.wait_for(engine._running_loops[task.id], timeout=60)
+        self.assertDownloadedIntact(task)
+        self.assertEqual(self.server.requests_without_cookie, 0, "probe and every chunk must send the cookie")
+
+    async def test_without_the_session_the_server_refuses(self):
+        url = self.serve()
+        self.server.required_cookie = "session=abc"
+        with mock.patch("openhydro.core.engine.RETRY_BACKOFF_BASE", 0.001):
+            task = await self.download(url)
+        self.assertEqual(task.status, TaskStatus.ERROR)
+        self.assertIn("HTTP 403", task.error_message)
 
 
 class TestServerQuirks(EngineDownloadTestCase):

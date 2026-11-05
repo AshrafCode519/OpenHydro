@@ -95,6 +95,8 @@ class DownloadTask:
     torrent_gid: Optional[str] = None
     seeders: int = 0
     peers: int = 0
+    # What the download is doing before/besides transferring (e.g. preparing ffmpeg); shown, not saved
+    phase: Optional[str] = None
 
     @property
     def downloaded_bytes(self) -> int:
@@ -159,5 +161,6 @@ class DownloadTask:
             "torrent_gid": self.torrent_gid,
             "seeders": self.seeders,
             "peers": self.peers,
+            "phase": self.phase,
             "chunks": [c.to_dict() for c in self.chunks],
         }

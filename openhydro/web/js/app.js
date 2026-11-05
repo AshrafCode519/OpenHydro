@@ -146,6 +146,9 @@ function handleWebSocketMessage(msg) {
   } else if (type === 'clipboard_link' || type === 'clipboard_open') {
     showClipboardOffer(data);
     return;
+  } else if (type.startsWith('component_')) {
+    handleComponentEvent(type, data);
+    return;
   } else if (type === 'task_cancelled') {
     delete tasks[data.id];
   } else if (type === 'auto_shutdown_triggered') {
@@ -373,6 +376,7 @@ function renderTaskCard(task) {
               ${torrentBadge}
             </div>
             <p class="text-xs text-gray-400 truncate mt-0.5 font-mono">${escapeHtml(task.url)}</p>
+            ${task.phase ? `<p class="text-[11px] text-amber-300 truncate mt-0.5" title="${escapeHtml(task.phase)}">${escapeHtml(task.phase)}</p>` : ''}
             ${isError && task.error_message ? `<p class="text-[11px] text-rose-400 truncate mt-0.5" title="${escapeHtml(task.error_message)}">${escapeHtml(task.error_message)}</p>` : ''}
           </div>
         </div>
@@ -1026,6 +1030,7 @@ async function loadSettings() {
 async function openSettingsModal() {
   document.getElementById('settings-modal').classList.remove('hidden');
   lucide.createIcons();
+  loadFfmpegStatus();
   try {
     const s = await loadSettings();
     const dirInput = document.getElementById('set-download-dir');
@@ -1082,6 +1087,61 @@ async function saveSettings() {
     }
   } catch (e) {
     showToast('لم يتم الحفظ: ' + e.message, 'error', 6000);
+  }
+}
+
+// --- ffmpeg (merging video with audio, MP3): status and manual download in the settings ---
+function renderFfmpegStatus(s) {
+  const text = document.getElementById('set-ffmpeg-status');
+  const button = document.getElementById('set-ffmpeg-install');
+  if (!text || !s) return;
+  let message;
+  let color = 'text-gray-400';
+  if (s.installing) {
+    const p = s.progress || {};
+    message = p.total ? `جاري التنزيل: ${Math.floor(p.done * 100 / p.total)}% من ${formatBytes(p.total)}` : 'جاري التنزيل...';
+    color = 'text-cyan-400';
+  } else if (s.available) {
+    message = s.source === 'openhydro' ? `✓ جاهز (نزّله OpenHydro${s.version ? '، ' + s.version : ''})` : '✓ جاهز (مثبت على الجهاز)';
+    color = 'text-emerald-400';
+  } else if (s.supported) {
+    message = 'غير موجود: هيتنزل تلقائياً أول مرة تنزّل فيديو بجودة عالية أو MP3.';
+  } else {
+    message = 'غير موجود: ثبّته من مدير الحزم في نظامك (مثلاً apt install ffmpeg).';
+    color = 'text-amber-400';
+  }
+  text.textContent = s.error ? `تعذر التنزيل: ${s.error}` : message;
+  text.className = `text-[10px] mt-0.5 ${s.error ? 'text-rose-400' : color}`;
+  button.classList.toggle('hidden', !s.supported || s.available || s.installing);
+}
+
+async function loadFfmpegStatus() {
+  try {
+    renderFfmpegStatus(await (await fetch('/api/components/ffmpeg')).json());
+  } catch (e) {
+    // Not shown: the settings work without it
+  }
+}
+
+async function installFfmpeg() {
+  try {
+    const res = await fetch('/api/components/ffmpeg/install', { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'HTTP ' + res.status);
+    renderFfmpegStatus(data);
+  } catch (e) {
+    showToast('تعذر بدء تنزيل ffmpeg: ' + e.message, 'error');
+  }
+}
+
+function handleComponentEvent(type, data) {
+  if (!data || data.name !== 'ffmpeg') return;
+  if (type === 'component_progress') {
+    renderFfmpegStatus({ supported: true, installing: true, progress: data });
+  } else if (type === 'component_ready') {
+    renderFfmpegStatus(data);
+  } else {
+    renderFfmpegStatus({ supported: true, available: false, error: data.error });
   }
 }
 

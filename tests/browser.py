@@ -121,9 +121,23 @@ class Browser:
                 raise AssertionError(message or f"timed out waiting for: {expression}")
             time.sleep(0.05)
 
-    def open(self, url: str):
+    def open(self, url: str, timeout: float = 20.0):
+        # Waits for the new document's load event: a readyState check right after navigating can still
+        # see the previous page, which then goes on handling events in the test's back
         self.events.clear()
         self.send("Page.navigate", url=url)
+        deadline = time.monotonic() + timeout
+        while not any(event["method"] == "Page.loadEventFired" for event in self.events):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise AssertionError(f"{url} did not load")
+            # Only listen: a command sent mid-navigation can fail while the page changes process
+            try:
+                msg = json.loads(self.ws.recv(timeout=min(remaining, 1.0)))
+            except TimeoutError:
+                continue
+            if "method" in msg:
+                self.events.append(msg)
         self.wait_for("document.readyState === 'complete'")
 
     def js_errors(self) -> List[str]:

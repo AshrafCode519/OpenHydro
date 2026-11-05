@@ -115,10 +115,16 @@ class HLSStreamParser:
 class HLSDownloader:
     @staticmethod
     def find_ffmpeg() -> Optional[str]:
-        """Locates ffmpeg executable in PATH or standard winget locations."""
+        """Locates ffmpeg executable in PATH, OpenHydro's own copy, or standard winget locations."""
         ffmpeg_bin = shutil.which("ffmpeg")
         if ffmpeg_bin:
             return ffmpeg_bin
+
+        # Downloaded by OpenHydro the first time a download needed it (ffmpeg_component)
+        from .ffmpeg_component import installed_path
+        own = installed_path()
+        if own:
+            return own
 
         # Common Windows locations
         potential_paths = [

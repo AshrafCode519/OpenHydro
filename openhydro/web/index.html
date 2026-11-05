@@ -536,6 +536,15 @@
           <input type="checkbox" id="set-clipboard" class="w-4 h-4 accent-cyan-500 rounded cursor-pointer">
         </label>
 
+        <div class="p-3 rounded-xl bg-white/5 border border-white/10 flex items-center justify-between gap-3">
+          <div class="min-w-0">
+            <p class="font-semibold text-gray-200">ffmpeg (دمج الصوت والصورة)</p>
+            <p class="text-[10px] text-gray-400">مطلوب للجودات العالية من يوتيوب وغيره ولتحويل الصوت لـ MP3. بيتنزل تلقائياً أول مرة تحتاجه.</p>
+            <p id="set-ffmpeg-status" class="text-[10px] text-gray-400 mt-0.5"></p>
+          </div>
+          <button id="set-ffmpeg-install" onclick="installFfmpeg()" class="hidden shrink-0 px-3 py-1.5 rounded-lg glass-panel glass-panel-hover text-xs text-cyan-400">تنزيل الآن (≈ 90 MB)</button>
+        </div>
+
         <label class="p-3 rounded-xl bg-white/5 border border-white/10 flex items-center justify-between cursor-pointer">
           <div>
             <p class="font-semibold text-gray-200">التشغيل مع ويندوز</p>

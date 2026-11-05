@@ -25,6 +25,7 @@ from .extractor import VideoExtractor
 from .torrent import TorrentManager
 from .security import sanitize_filename, get_app_data_dir
 from .settings import AppSettings
+from . import ffmpeg_component
 
 # Minimum seconds between two progress events for the same task (status changes are immediate)
 PROGRESS_EVENT_INTERVAL = 0.25
@@ -717,6 +718,8 @@ class DownloadEngine:
 
         try:
             fmt = task.selected_format or "bestvideo+bestaudio/best"
+            if VideoExtractor.needs_ffmpeg(fmt) and not HLSDownloader.find_ffmpeg():
+                await self._prepare_ffmpeg(task)
             final_path = await VideoExtractor.download(
                 url=task.url,
                 output_path=task.save_path,
@@ -758,7 +761,29 @@ class DownloadEngine:
             task.error_message = str(e)
             self._notify("task_error", task)
         finally:
+            task.phase = None
             self.store.save(task)
+
+    async def _prepare_ffmpeg(self, task: DownloadTask):
+        """
+        Downloads OpenHydro's ffmpeg the first time a video needs it (merging video with audio, MP3).
+        If that is not possible the download still goes ahead, in the best quality that needs none.
+        """
+        def on_progress(done: int, total: int):
+            task.phase = f"تجهيز ffmpeg لأول مرة (دمج الصوت والصورة): {done * 100 // max(total, 1)}% من {total // 2**20} MB"
+            self._notify("task_progress", task)
+
+        try:
+            if not ffmpeg_component.supported():
+                raise RuntimeError("ffmpeg is not installed")
+            task.phase = "تجهيز ffmpeg لأول مرة (دمج الصوت والصورة)..."
+            self._notify("task_updated", task)
+            await asyncio.to_thread(ffmpeg_component.ensure, on_progress)
+            task.phase = None
+        except Exception as e:
+            print(f"[Engine] ffmpeg unavailable: {e}")
+            task.phase = "ffmpeg غير متاح: التنزيل بأفضل جودة لا تحتاج دمج"
+        self._notify("task_updated", task)
 
     async def _execute_hls_download(self, task: DownloadTask):
         """Executes HLS (.m3u8) stream downloading and remuxing."""
@@ -851,7 +876,10 @@ class DownloadEngine:
             if missing:
                 raise RuntimeError(f"تعذر تحميل {missing} من {total_segs} جزء من البث")
 
-            # 3. Assemble stream into final video file (FFmpeg runs off the event loop)
+            # 3. Assemble stream into final video file (FFmpeg runs off the event loop); without
+            #    ffmpeg the segments are joined into a .ts instead of the requested .mp4
+            if task.save_path.lower().endswith(".mp4") and not HLSDownloader.find_ffmpeg():
+                await self._prepare_ffmpeg(task)
             output_path = await asyncio.to_thread(HLSDownloader.assemble_stream, downloaded, task.save_path)
             if output_path:
                 if output_path != task.save_path:
@@ -886,6 +914,7 @@ class DownloadEngine:
             task.error_message = str(e)
             self._notify("task_error", task)
         finally:
+            task.phase = None
             self.store.save(task)
 
     async def _execute_torrent_download(self, task: DownloadTask):

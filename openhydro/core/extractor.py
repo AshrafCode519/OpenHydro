@@ -378,6 +378,24 @@ class VideoExtractor:
         return [f"res:{cap.group(1)}" if cap else "res", "vcodec:h264", "acodec:aac"]
 
     @staticmethod
+    def needs_ffmpeg(format_selector: Optional[str]) -> bool:
+        """Merging a video and an audio stream, or making an MP3 (the default picks a merge too)."""
+        return not format_selector or format_selector == "audio_mp3" or "+" in format_selector
+
+    @staticmethod
+    def without_merging(format_selector: str) -> str:
+        """
+        The same request using only formats a site serves as one file: yt-dlp aborts a merge (or an
+        MP3) when ffmpeg is missing, so a lower quality is the alternative to a failed download.
+        """
+        if format_selector == "audio_mp3":
+            return "audio_m4a"  # the original audio stream, no conversion
+        if format_selector in ("audio_m4a", "subtitle_srt", "subtitle_txt"):
+            return format_selector
+        single_file = [choice for choice in format_selector.split("/") if "+" not in choice]
+        return "/".join(single_file) or "best"
+
+    @staticmethod
     def _locate_output(out_base: str, extensions) -> Optional[str]:
         """
         Returns "<out_base>.<ext>" for the first extension that exists. Exact names only: never a
@@ -410,6 +428,8 @@ class VideoExtractor:
             format_selector = "bestvideo+bestaudio/best"
         elif format_selector not in special_formats and not (format_selector.endswith("/best") or format_selector.endswith("/b")):
             format_selector = f"{format_selector}/bestvideo+bestaudio/best"
+        if not ffmpeg_bin:
+            format_selector = cls.without_merging(format_selector)
 
         def progress_hook(d):
             if is_cancelled and is_cancelled():

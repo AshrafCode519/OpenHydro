@@ -10,13 +10,14 @@ import shutil
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 from starlette.testclient import TestClient
 
 from browser import NO_ANIMATIONS, Browser, DashboardServer, find_browser, seed_tasks
 from helpers import make_engine
 from openhydro.api import create_app
-from openhydro.core import TaskStatus
+from openhydro.core import TaskStatus, ffmpeg_component
 from openhydro.core.clipboard import ClipboardWatcher
 
 BROWSER = find_browser()
@@ -192,6 +193,40 @@ class TestSettingsPage(DashboardTestCase):
         self.browser.evaluate("openAddModal()")
         self.assertEqual(self.browser.evaluate("document.getElementById('modal-connections-select').value"), "16")
         self.assertNoJsErrors()
+
+    def test_ffmpeg_can_be_downloaded_from_the_settings(self):
+        missing = {"supported": True, "available": False, "source": None, "version": None,
+                   "installing": False, "progress": None}
+        ready = {**missing, "available": True, "source": "openhydro", "version": "N-1-test"}
+        status = mock.Mock(return_value=missing)
+
+        def ensure(on_progress):
+            on_progress(45, 90)
+            status.return_value = ready
+            return "ffmpeg.exe"
+
+        with mock.patch.object(ffmpeg_component, "status", status), \
+                mock.patch.object(ffmpeg_component, "ensure", side_effect=ensure) as ensure_mock:
+            self.browser.evaluate("openSettingsModal()")
+            self.browser.wait_for("!document.getElementById('set-ffmpeg-install').classList.contains('hidden')",
+                                  message="no download button while ffmpeg is missing")
+            self.browser.evaluate("document.getElementById('set-ffmpeg-install').click()")
+            self.browser.wait_for("document.getElementById('set-ffmpeg-status').textContent.includes('N-1-test')",
+                                  message="the finished download was not shown")
+        ensure_mock.assert_called_once()
+        self.assertTrue(self.browser.evaluate("document.getElementById('set-ffmpeg-install').classList.contains('hidden')"))
+        self.assertNoJsErrors()
+
+
+class TestPreparingFfmpeg(DashboardTestCase):
+    def test_the_row_says_what_the_download_is_waiting_for(self):
+        task = self.tasks["downloading"]
+        task.phase = "تجهيز ffmpeg لأول مرة (دمج الصوت والصورة): 50% من 90 MB"
+        self.engine._notify("task_updated", task)
+        self.browser.wait_for(f"{ROWS}[0].textContent.includes('تجهيز ffmpeg')", message="the phase was not shown")
+        task.phase = None
+        self.engine._notify("task_updated", task)
+        self.browser.wait_for(f"!{ROWS}[0].textContent.includes('تجهيز ffmpeg')")
 
 
 class TestLayout(DashboardTestCase):

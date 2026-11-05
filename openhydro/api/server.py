@@ -21,7 +21,7 @@ from starlette.datastructures import Headers, MutableHeaders
 from starlette.requests import cookie_parser
 from starlette.websockets import WebSocketClose
 
-from openhydro.core import DownloadEngine, TaskStatus, StorageManager, autostart
+from openhydro.core import DownloadEngine, TaskStatus, StorageManager, autostart, ffmpeg_component
 from openhydro.core.security import load_or_create_secret, is_within_directory
 from openhydro.core.settings import SettingsError
 
@@ -668,6 +668,38 @@ def create_app(
             raise HTTPException(status_code=404, detail="No window to show")
         await asyncio.to_thread(on_show_window)
         return {"status": "shown"}
+
+    # ffmpeg (merging video with audio, MP3): downloaded automatically the first time a video needs
+    # it, or from the settings page with these
+    background_jobs = set()
+
+    @app.get("/api/components/ffmpeg")
+    async def get_ffmpeg_status():
+        return await asyncio.to_thread(ffmpeg_component.status)
+
+    @app.post("/api/components/ffmpeg/install")
+    async def install_ffmpeg():
+        current = await asyncio.to_thread(ffmpeg_component.status)
+        if not current["supported"] and not current["available"]:
+            raise HTTPException(status_code=400, detail="تثبيت ffmpeg التلقائي متاح على ويندوز فقط")
+        if current["available"] or current["installing"]:
+            return current
+
+        def on_progress(done: int, total: int):
+            engine._notify("component_progress", {"name": "ffmpeg", "done": done, "total": total})
+
+        async def install():
+            try:
+                await asyncio.to_thread(ffmpeg_component.ensure, on_progress)
+            except Exception as e:
+                engine._notify("component_failed", {"name": "ffmpeg", "error": str(e)})
+            else:
+                engine._notify("component_ready", {"name": "ffmpeg", **ffmpeg_component.status()})
+
+        job = asyncio.create_task(install())
+        background_jobs.add(job)
+        job.add_done_callback(background_jobs.discard)
+        return {**current, "installing": True}
 
     # A download link copied anywhere (clipboard monitoring), waiting for the user
     @app.get("/api/clipboard")

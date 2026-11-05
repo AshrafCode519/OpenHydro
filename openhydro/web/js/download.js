@@ -48,9 +48,9 @@ function render() {
     $('dw-path').title = task.save_path;
     setTitle(`اكتمل: ${task.filename}`);
   } else {
-    $('dw-status').textContent = active
+    $('dw-status').textContent = task.phase || (active
       ? `جاري التنزيل (${task.num_connections} اتصالات)`
-      : (STATUS_TEXT[task.status] || task.status);
+      : (STATUS_TEXT[task.status] || task.status));
     $('dw-status').className = 'font-semibold ' + (task.status === 'error' ? 'text-rose-400'
       : task.status === 'paused' ? 'text-amber-400' : 'text-cyan-400');
     $('dw-size').textContent = task.total_bytes ? formatBytes(task.total_bytes) : 'غير معروف';

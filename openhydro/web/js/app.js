@@ -136,6 +136,7 @@ function initWebSocket() {
     console.log('[OpenHydro WS] Connected to Telemetry Hub');
     // A link copied while this page was closed or disconnected (e.g. started with Windows)
     loadClipboardOffer();
+    loadRequestedAddDialog();
   };
 
   ws.onmessage = (event) => {
@@ -168,6 +169,12 @@ function handleWebSocketMessage(msg) {
     return;
   } else if (type.startsWith('component_')) {
     handleComponentEvent(type, data);
+    return;
+  } else if (type === 'add_dialog') {
+    openRequestedAddDialog(data);
+    return;
+  } else if (type === 'add_failed') {
+    showToast(`تعذر إضافة ${data.url}: ${data.error}`, 'error', 9000);
     return;
   } else if (type === 'task_cancelled') {
     delete tasks[data.id];
@@ -823,6 +830,18 @@ async function probeModalUrl() {
       if (plBanner) plBanner.classList.add('hidden');
     }
 
+    if (data.is_web_page) {
+      // A page, not a file, with no video in it: say so before "download" is pressed
+      document.getElementById('probe-filename').innerText = 'صفحة ويب (مش ملف)';
+      document.getElementById('probe-size').innerText = 'مفيش فيديو قدرنا نلاقيه في الصفحة دي';
+      document.getElementById('probe-ranges').innerText = '—';
+      document.getElementById('probe-ranges').className = 'text-rose-400 font-semibold';
+      qualityContainer.classList.add('hidden');
+      if (thumbElem) thumbElem.classList.add('hidden');
+      infoCard.classList.remove('hidden');
+      return;
+    }
+
     if (data.is_video_platform) {
       document.getElementById('probe-filename').innerText = data.title || data.filename;
       document.getElementById('probe-size').innerText = data.total_bytes ? formatBytes(data.total_bytes) : 'فيديو منصة (حجم حسب الجودة)';
@@ -966,13 +985,15 @@ async function submitNewTask(downloadAgain = false) {
       })
     });
     const data = await res.json();
+    // A refused link (e.g. a web page with no video) is an error, not a download that "started"
+    if (!res.ok) throw new Error(data.detail || 'HTTP ' + res.status);
     tasks[data.id] = data;
     closeAddModal();
     renderTasks();
     updateGlobalStats();
     showToast(`⚡ تم بدء تنزيل [${data.filename}] بنجاح!`, 'success');
   } catch (e) {
-    showToast('حدث خطأ أثناء إضافة التنزيل: ' + e, 'error');
+    showToast('تعذر إضافة التنزيل: ' + e.message, 'error', 7000);
   }
 }
 
@@ -1324,6 +1345,23 @@ document.addEventListener('click', (event) => {
   const row = event.target.closest('#tasks-container > [data-task-id]');
   if (row) selectTask(row.dataset.taskId);
 });
+
+// --- The browser extension's "send" button: the add dialog with its link (and the quality choice) ---
+function openRequestedAddDialog(link) {
+  if (!IS_LOCAL_DASHBOARD || !link || !link.url) return;
+  fetch('/api/app/add_dialog', { method: 'DELETE' }).catch(() => {});
+  openAddModal(link.url);
+}
+
+async function loadRequestedAddDialog() {
+  if (!IS_LOCAL_DASHBOARD) return;
+  try {
+    const { link } = await (await fetch('/api/app/add_dialog')).json();
+    if (link) openRequestedAddDialog(link);
+  } catch (e) {
+    // Not reachable yet: the event brings it
+  }
+}
 
 // --- Clipboard monitoring: a download link copied anywhere, waiting for the user ---
 // This PC only: the phone remote shares this dashboard but not the PC's clipboard

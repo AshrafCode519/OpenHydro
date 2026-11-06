@@ -24,6 +24,7 @@ from starlette.websockets import WebSocketClose
 from openhydro.core import DownloadEngine, TaskStatus, StorageManager, autostart, ffmpeg_component
 from openhydro.core.security import load_or_create_secret, is_within_directory
 from openhydro.core.settings import SettingsError
+from openhydro.core.engine import WebPageError
 
 LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
 EXTENSION_ORIGIN_PATTERN = r"^(chrome-extension|moz-extension)://[A-Za-z0-9._-]+$"
@@ -119,6 +120,10 @@ class AddTaskRequest(BaseModel):
     referrer: Optional[str] = None
     auto_start: bool = True
     format_id: Optional[str] = None
+
+
+class AddDialogRequest(BaseModel):
+    url: str = Field(min_length=1, max_length=8192)
 
 
 class SpeedLimitRequest(BaseModel):
@@ -321,16 +326,19 @@ def create_app(
     @app.post("/api/tasks")
     async def add_task(req: AddTaskRequest, request: Request):
         ensure_inside_download_dir(req.save_dir)
-        task = await engine.add_download(
-            url=req.url,
-            filename=req.filename,
-            save_dir=req.save_dir,
-            num_connections=req.num_connections,
-            custom_headers=req.custom_headers,
-            referrer=req.referrer,
-            auto_start=req.auto_start,
-            format_id=req.format_id,
-        )
+        try:
+            task = await engine.add_download(
+                url=req.url,
+                filename=req.filename,
+                save_dir=req.save_dir,
+                num_connections=req.num_connections,
+                custom_headers=req.custom_headers,
+                referrer=req.referrer,
+                auto_start=req.auto_start,
+                format_id=req.format_id,
+            )
+        except WebPageError as e:
+            raise HTTPException(status_code=400, detail=str(e))
         show_download_window(task, req, request)
         return task.to_dict()
 
@@ -718,6 +726,29 @@ def create_app(
         job.add_done_callback(background_jobs.discard)
         return {**current, "installing": True}
 
+    # The browser extension's "send" button: OpenHydro's add dialog with the link (quality choice
+    # included), shown in the app's window; kept until that window opened it
+    add_dialog = {"link": None}
+
+    @app.post("/api/app/add_dialog")
+    async def open_add_dialog(req: AddDialogRequest, request: Request):
+        if not (request.client and request.client.host in LOOPBACK_HOSTS):
+            raise HTTPException(status_code=403, detail="This PC only")
+        add_dialog["link"] = {"url": req.url}
+        engine._notify("add_dialog", add_dialog["link"])
+        if on_show_window:
+            await asyncio.to_thread(on_show_window)
+        return {"status": "shown"}
+
+    @app.get("/api/app/add_dialog")
+    async def get_add_dialog():
+        return {"link": add_dialog["link"]}
+
+    @app.delete("/api/app/add_dialog")
+    async def add_dialog_opened():
+        add_dialog["link"] = None
+        return {"status": "done"}
+
     # A download link copied anywhere (clipboard monitoring), waiting for the user
     @app.get("/api/clipboard")
     async def get_clipboard_offer():
@@ -849,6 +880,8 @@ def create_app(
                 show_download_window(task, req, request)
             except Exception as e:
                 print(f"[RemotePush] Error in async add: {e}")
+                # The extension was already told "sent": say in the app what went wrong
+                engine._notify("add_failed", {"url": req.url, "error": str(e)})
 
         # Referenced until done: an unreferenced task can be garbage-collected before it finishes
         job = asyncio.create_task(_async_add())

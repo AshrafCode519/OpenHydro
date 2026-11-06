@@ -202,6 +202,9 @@ def main():
     def notify_finished(event_type, payload):
         if event_type == "task_completed" and engine.settings.get("notify_on_complete"):
             tray.notify(f"✅ اكتمل التنزيل: {payload.get('filename', '')}", "OpenHydro")
+        elif event_type == "add_failed":
+            # Sent from the browser (its menu, video button): the window may well be hidden
+            tray.notify(f"⚠️ {payload.get('error', '')}", "تعذر إضافة التنزيل")
 
     engine.register_listener(notify_finished)
 

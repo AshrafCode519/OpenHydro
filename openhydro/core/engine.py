@@ -35,6 +35,16 @@ PROGRESS_SAVE_INTERVAL = 2.0
 # Shown while a video downloads without ffmpeg (only formats a site serves as one file can be used)
 FFMPEG_UNAVAILABLE_PHASE = "ffmpeg غير متاح: التنزيل بأفضل جودة لا تحتاج دمج"
 
+# Link endings that are still web pages, not files (a page there may hold a video)
+WEB_PAGE_EXTENSIONS = {"html", "htm", "php", "asp", "aspx", "jsp", "cfm", "shtml", "xhtml"}
+
+
+class WebPageError(ValueError):
+    """The link is a web page with no video OpenHydro could find: there is nothing to download."""
+
+
+WEB_PAGE_MESSAGE = "الرابط ده صفحة ويب ومفيش فيها فيديو قدرنا نلاقيه، فمفيش حاجة تتنزّل"
+
 # Retrying these will not help (expired/forbidden link, missing file): give up after one more try
 PERMANENT_HTTP_ERRORS = {400, 401, 403, 404, 405, 410, 416, 451}
 PERMANENT_ERROR_RETRIES = 1
@@ -219,21 +229,27 @@ class DownloadEngine:
             except Exception as e:
                 print(f"[Probe] Google Drive file resolve failed: {e}")
 
-        # Check if URL belongs to a video streaming platform (YouTube, TikTok, Facebook, etc.)
-        if VideoExtractor.is_video_site(url):
+        def video_page(vinfo: Dict) -> Dict:
+            return {
+                "filename": vinfo["filename"],
+                "total_bytes": vinfo.get("total_bytes", 0),
+                "supports_ranges": True,
+                "is_video_platform": True,
+                "title": vinfo["title"],
+                "thumbnail": vinfo.get("thumbnail"),
+                "duration": vinfo.get("duration", 0),
+                "qualities": vinfo.get("qualities", []),
+                "has_subtitles": vinfo.get("has_subtitles", False),
+            }
+
+        # A video site: the short list of the big ones, or any of the 1800+ sites yt-dlp has an extractor
+        # for (a link with a file extension is a file, not a page: no need to ask)
+        extension = os.path.splitext(path_name)[1].lower().lstrip(".")
+        looks_like_file = bool(extension) and extension not in WEB_PAGE_EXTENSIONS
+        if VideoExtractor.is_video_site(url) or (
+                not looks_like_file and await asyncio.to_thread(VideoExtractor.has_site_extractor, url)):
             try:
-                vinfo = await VideoExtractor.extract_info(url)
-                return {
-                    "filename": vinfo["filename"],
-                    "total_bytes": vinfo.get("total_bytes", 0),
-                    "supports_ranges": True,
-                    "is_video_platform": True,
-                    "title": vinfo["title"],
-                    "thumbnail": vinfo.get("thumbnail"),
-                    "duration": vinfo.get("duration", 0),
-                    "qualities": vinfo.get("qualities", []),
-                    "has_subtitles": vinfo.get("has_subtitles", False),
-                }
+                return video_page(await VideoExtractor.extract_info(url))
             except Exception as e:
                 print(f"[Probe] Platform video extraction failed: {e}")
 
@@ -254,6 +270,7 @@ class DownloadEngine:
             except Exception as e:
                 print(f"[Probe] HLS parse failed: {e}")
 
+        content_type = ""
         try:
             timeout = httpx.Timeout(15.0, connect=10.0)
             # Same encoding the workers use, so Content-Length is the size of the raw file
@@ -268,6 +285,8 @@ class DownloadEngine:
                 if resp.status_code >= 400 or "content-length" not in resp.headers:
                     async with client.stream("GET", url, headers={**probe_headers, "Range": "bytes=0-0"}) as resp:
                         pass
+
+                content_type = resp.headers.get("content-type", "").lower()
 
                 # Check Content-Disposition for filename
                 cd = resp.headers.get("content-disposition", "")
@@ -292,6 +311,17 @@ class DownloadEngine:
 
         except Exception as e:
             print(f"[Probe] Error probing URL {url}: {e}")
+
+        # A web page, not a file (e.g. a video page on a site yt-dlp has no extractor for): the video in
+        # it is what is wanted, which yt-dlp's generic extractor finds in most players; the HTML never is
+        if "text/html" in content_type:
+            try:
+                vinfo = await VideoExtractor.extract_info(url)
+                if vinfo.get("has_media"):
+                    return video_page(vinfo)
+            except Exception as e:
+                print(f"[Probe] No video found in the page {url}: {e}")
+            return {"filename": filename, "total_bytes": 0, "supports_ranges": False, "is_web_page": True}
 
         # Clean filename from invalid OS characters
         filename = re.sub(r'[\\/*?:"<>|]', "_", filename)
@@ -356,6 +386,9 @@ class DownloadEngine:
         os.makedirs(save_dir, exist_ok=True)
 
         info = await self.probe_url(url, custom_headers)
+        if info.get("is_web_page"):
+            # Saving the page's HTML as a "download" was never what anyone wanted
+            raise WebPageError(WEB_PAGE_MESSAGE)
         raw_name = sanitize_filename(filename or info["filename"])
 
         # Adjust file extension based on selected format

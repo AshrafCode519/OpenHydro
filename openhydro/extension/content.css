@@ -15,6 +15,16 @@
   line-height: normal !important;
 }
 
+/* Every site but YouTube: outside the player, at the top of the page, kept next to its video by
+   content.js (players cover the video with a click-catching layer that would sit above the button) */
+.openhydro-wrapper.openhydro-floating {
+  position: fixed !important;
+}
+
+.openhydro-wrapper.openhydro-floating .openhydro-drag-handle {
+  display: none !important;
+}
+
 /* Floating Grab Button */
 .openhydro-grab-btn {
   display: inline-flex !important;

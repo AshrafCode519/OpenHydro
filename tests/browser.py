@@ -153,6 +153,21 @@ class Browser:
                 errors.append(" ".join(str(arg.get("value", arg.get("description", ""))) for arg in params.get("args", [])))
         return errors
 
+    KEYS = {  # key: (code, Windows virtual key code, text typed)
+        "ArrowDown": ("ArrowDown", 40, None), "ArrowUp": ("ArrowUp", 38, None), "Delete": ("Delete", 46, None),
+        "Enter": ("Enter", 13, "\r"), "Escape": ("Escape", 27, None), " ": ("Space", 32, " "),
+    }
+
+    def press(self, key: str, ctrl: bool = False):
+        """A real key press, through the browser's input pipeline (not a synthetic JS event)."""
+        if key in self.KEYS:
+            code, vk, text = self.KEYS[key]
+        else:  # a letter
+            code, vk, text = f"Key{key.upper()}", ord(key.upper()), key
+        params = {"key": key, "code": code, "windowsVirtualKeyCode": vk, "modifiers": 2 if ctrl else 0}
+        self.send("Input.dispatchKeyEvent", type="keyDown", **params, **({"text": text} if text and not ctrl else {}))
+        self.send("Input.dispatchKeyEvent", type="keyUp", **params)
+
     def screenshot(self, path: str):
         data = self.send("Page.captureScreenshot", format="png")["data"]
         with open(path, "wb") as f:

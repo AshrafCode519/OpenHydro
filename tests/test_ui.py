@@ -371,6 +371,77 @@ class TestClipboardOffer(DashboardTestCase):
         self.assertNoJsErrors()
 
 
+class TestKeyboard(DashboardTestCase):
+    """Shortcuts (IDM style). Rows: downloading, paused, error, completed."""
+
+    def shown(self, element_id):
+        return self.browser.evaluate(f"!document.getElementById('{element_id}').classList.contains('hidden')")
+
+    def selected(self):
+        return self.browser.evaluate(
+            f"{ROWS}.findIndex(el => el.className.includes('ring-2'))")
+
+    def test_new_download_and_escape(self):
+        self.browser.press("n", ctrl=True)
+        self.browser.wait_for("!document.getElementById('add-modal').classList.contains('hidden')",
+                              message="Ctrl+N did not open the add dialog")
+        self.browser.press("Escape")
+        self.assertFalse(self.shown("add-modal"))
+        self.browser.press("f", ctrl=True)
+        self.assertEqual(self.browser.evaluate("document.activeElement.id"), "search-input")
+
+    def test_arrows_select_and_space_pauses(self):
+        self.browser.press("ArrowDown")
+        self.assertEqual(self.selected(), 0)
+        self.browser.press(" ")
+        eventually(lambda: self.tasks["downloading"].status == TaskStatus.PAUSED)
+        for _ in range(5):
+            self.browser.press("ArrowDown")
+        self.assertEqual(self.selected(), 3, "stops at the last download")
+        self.browser.press("ArrowUp")
+        self.assertEqual(self.selected(), 2)
+        self.assertNoJsErrors()
+
+    def test_delete_asks_and_escape_closes_the_question(self):
+        self.browser.evaluate(f"{ROWS}[2].querySelector('h3').click()")  # a click selects the row
+        self.assertEqual(self.selected(), 2)
+        self.browser.press("Delete")
+        self.assertTrue(self.shown("app-confirm-modal"))
+        self.assertEqual(self.browser.evaluate("document.getElementById('confirm-modal-title').innerText"), "إزالة التنزيل")
+        self.browser.press("Escape")
+        self.assertFalse(self.shown("app-confirm-modal"))
+        self.assertIn(self.tasks["error"].id, self.engine.tasks, "Escape is no")
+
+    def test_enter_opens_a_finished_download(self):
+        with open(self.tasks["completed"].save_path, "wb") as f:
+            f.write(b"done")
+        with mock.patch("os.startfile", create=True) as opened, mock.patch("subprocess.Popen") as popen:
+            self.browser.evaluate(f"{ROWS}[3].querySelector('h3').click()")
+            self.browser.press("Enter")
+            eventually(lambda: opened.called or popen.called)
+
+    def test_keys_typed_in_a_field_are_not_shortcuts(self):
+        self.browser.evaluate(f"{ROWS}[1].querySelector('h3').click(); document.getElementById('search-input').focus()")
+        self.browser.press("Delete")
+        self.browser.press(" ")
+        self.assertFalse(self.shown("app-confirm-modal"))
+        self.assertEqual(self.tasks["paused"].status, TaskStatus.PAUSED)
+
+    def test_pasting_a_link_starts_a_download(self):
+        paste = """(text => {
+          const data = new DataTransfer();
+          data.setData('text', text);
+          document.body.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true }));
+        })"""
+        self.browser.evaluate(f"{paste}('just some words')")
+        self.assertFalse(self.shown("add-modal"), "not a link")
+        self.browser.evaluate(f"{paste}('https://example.com/setup.exe')")
+        self.assertTrue(self.shown("add-modal"))
+        self.assertEqual(self.browser.evaluate("document.getElementById('modal-url-input').value"),
+                         "https://example.com/setup.exe")
+        self.assertNoJsErrors()
+
+
 class TestDownloadWindowPage(DashboardTestCase):
     """web/download.html: what the desktop app's download window shows (at its real size)."""
 

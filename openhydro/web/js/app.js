@@ -2,6 +2,7 @@
 
 let tasks = {};
 const renderedRows = new Map();  // task id -> { el, html }: the rows currently in the list
+let selectedTaskId = null;  // the download the keyboard acts on (click or arrow keys)
 let currentCategory = 'all';
 let currentSearch = '';
 let ws = null;
@@ -389,7 +390,7 @@ function renderTaskCard(task) {
   ` : '';
 
   return `
-    <div class="glass-panel glass-panel-hover rounded-2xl p-3 sm:p-4 transition-all">
+    <div class="glass-panel glass-panel-hover rounded-2xl p-3 sm:p-4 transition-all ${task.id === selectedTaskId ? 'ring-2 ring-cyan-500/60' : ''}">
       <div class="flex flex-wrap sm:flex-nowrap items-start justify-between gap-3 sm:gap-4">
         <!-- Icon & Title (a row of its own on phones, the buttons go under it) -->
         <div class="flex items-start gap-3 flex-1 basis-full sm:basis-0 min-w-0">
@@ -1222,6 +1223,107 @@ function handleComponentEvent(type, data) {
     renderFfmpegStatus({ supported: true, available: false, error: data.error });
   }
 }
+
+// --- Keyboard shortcuts (IDM style); the list is shown in the settings window ---
+
+// Topmost first: the confirmation can sit on top of another dialog
+const DIALOGS = [
+  ['app-confirm-modal', closeConfirmModal], ['preview-modal', closePreviewModal], ['add-modal', closeAddModal],
+  ['refresh-modal', closeRefreshModal], ['scheduler-modal', closeSchedulerModal], ['settings-modal', closeSettingsModal],
+  ['playlist-modal', closePlaylistModal], ['extension-modal', closeExtensionModal], ['update-modal', closeUpdateModal],
+  ['mobile-modal', closeMobileRemoteModal],
+];
+
+function openDialog() {
+  return DIALOGS.find(([id]) => {
+    const el = document.getElementById(id);
+    return el && !el.classList.contains('hidden');
+  });
+}
+
+// Keys and pastes in a text field are for the field, not shortcuts (the target can be the document itself)
+function inTextField(target) {
+  return target instanceof Element && !!target.closest('input, textarea, select, [contenteditable="true"]');
+}
+
+function shownTaskIds() {
+  return [...document.querySelectorAll('#tasks-container > [data-task-id]')].map(el => el.dataset.taskId);
+}
+
+function selectTask(id) {
+  selectedTaskId = id;
+  renderTasks();
+  document.querySelector(`#tasks-container > [data-task-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: 'nearest' });
+}
+
+document.addEventListener('keydown', (event) => {
+  const dialog = openDialog();
+  if (event.key === 'Escape') {
+    if (dialog) {
+      event.preventDefault();
+      dialog[1]();
+    } else {
+      toggleHeaderMenu(false);
+    }
+    return;
+  }
+  if (dialog) return;  // the dialog has the keyboard (typing a link, a name...)
+
+  const ctrl = event.ctrlKey || event.metaKey;
+  if (ctrl && !event.shiftKey && !event.altKey) {
+    const key = event.key.toLowerCase();
+    if (key === 'n') {
+      event.preventDefault();
+      openAddModal();
+    } else if (key === 'f') {
+      event.preventDefault();
+      document.getElementById('search-input').focus();
+    }
+    return;
+  }
+  if (event.altKey || inTextField(event.target)) return;
+
+  const ids = shownTaskIds();
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    if (!ids.length) return;
+    event.preventDefault();
+    const at = ids.indexOf(selectedTaskId);
+    const step = event.key === 'ArrowDown' ? 1 : -1;
+    selectTask(ids[at < 0 ? 0 : Math.min(ids.length - 1, Math.max(0, at + step))]);
+    return;
+  }
+
+  const task = ids.includes(selectedTaskId) ? tasks[selectedTaskId] : null;
+  if (!task) return;
+  if (event.key === 'Delete') {
+    event.preventDefault();
+    deleteTask(task.id);
+  } else if (event.key === ' ') {
+    event.preventDefault();
+    if (task.status === 'downloading' || task.status === 'queued') pauseTask(task.id);
+    else if (task.status === 'paused' || task.status === 'error') resumeTask(task.id);
+  } else if (event.key === 'Enter' && task.status === 'completed') {
+    event.preventDefault();
+    openTaskFile(task.id);
+  }
+});
+
+// Ctrl+V outside a text field: a pasted link starts a new download, as pasting into IDM does
+document.addEventListener('paste', (event) => {
+  if (openDialog() || inTextField(event.target)) return;
+  const text = (event.clipboardData?.getData('text') || '').trim();
+  if (/^(https?:\/\/|magnet:\?)\S+$/i.test(text)) {
+    event.preventDefault();
+    openAddModal(text);
+  }
+});
+
+// A click on a download (not on its buttons) selects it for the keyboard
+document.addEventListener('click', (event) => {
+  if (!(event.target instanceof Element) || event.target.closest('button, a, input, select')) return;
+  const row = event.target.closest('#tasks-container > [data-task-id]');
+  if (row) selectTask(row.dataset.taskId);
+});
 
 // --- Clipboard monitoring: a download link copied anywhere, waiting for the user ---
 // This PC only: the phone remote shares this dashboard but not the PC's clipboard

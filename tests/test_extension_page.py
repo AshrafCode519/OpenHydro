@@ -5,10 +5,18 @@ button must be outside the player and actually receive the click. Skipped withou
 """
 
 import os
+import shutil
+import tempfile
 import unittest
 import urllib.parse
+from unittest import mock
+
+from starlette.testclient import TestClient
 
 from browser import Browser, find_browser
+from helpers import make_engine
+from openhydro.api import create_app
+from openhydro.core.engine import WebPageError
 
 BROWSER = find_browser()
 EXTENSION = os.path.join(os.path.dirname(__file__), "..", "openhydro", "extension")
@@ -114,6 +122,49 @@ class TestVideoButtonOnOtherSites(unittest.TestCase):
                               "?.includes('مفيش فيديو')", message="no explanation in the menu")
         self.assertFalse(self.browser.evaluate("!!document.querySelector('.openhydro-quality-item')"),
                          "no download choices that cannot work")
+
+
+class TestExtensionAddDialogAndWebPageRejection(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.addCleanup(lambda: shutil.rmtree(self.temp_dir, ignore_errors=True))
+        self.engine = make_engine(self, self.temp_dir)
+        self.notifications = []
+        self.engine.register_listener(lambda t, d: self.notifications.append((t, d)))
+        self.app = create_app(self.engine, remote_token="secret-token")
+        self.client = TestClient(self.app, base_url="http://127.0.0.1:8765", client=("127.0.0.1", 50000))
+
+    def test_add_dialog_flow(self):
+        # 1. Post from extension send button
+        res = self.client.post("/api/app/add_dialog", json={"url": "https://www.youtube.com/watch?v=sample"})
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json(), {"status": "shown"})
+        self.assertTrue(any(ev[0] == "add_dialog" for ev in self.notifications))
+
+        # 2. OpenHydro dashboard queries active dialog link
+        res_get = self.client.get("/api/app/add_dialog")
+        self.assertEqual(res_get.status_code, 200)
+        self.assertEqual(res_get.json()["link"]["url"], "https://www.youtube.com/watch?v=sample")
+
+        # 3. Modal opens and clears the pending dialog
+        res_del = self.client.delete("/api/app/add_dialog")
+        self.assertEqual(res_del.status_code, 200)
+        self.assertEqual(res_del.json(), {"status": "done"})
+
+        res_get2 = self.client.get("/api/app/add_dialog")
+        self.assertIsNone(res_get2.json()["link"])
+
+    def test_add_dialog_rejects_external_hosts(self):
+        remote_client = TestClient(self.app, base_url="http://192.168.1.50:8765", client=("192.168.1.50", 50000))
+        res = remote_client.post("/api/app/add_dialog", json={"url": "https://example.com"})
+        self.assertEqual(res.status_code, 403)
+
+    def test_task_add_rejects_plain_webpage_with_400(self):
+        # Mock probe_url to return is_web_page: True
+        with mock.patch.object(self.engine, "probe_url", return_value={"is_web_page": True, "filename": "page.html", "total_bytes": 0}):
+            res = self.client.post("/api/tasks", json={"url": "https://example.com/no-video-here"})
+            self.assertEqual(res.status_code, 400)
+            self.assertIn("صفحة ويب", res.json()["detail"])
 
 
 if __name__ == "__main__":

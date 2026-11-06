@@ -146,6 +146,20 @@ class TestWhichDownloadsOpenAWindow(unittest.TestCase):
             {"url": "https://example.com/c.bin", "title": "c", "index": 1}]})
         self.assertEqual(self.started, [])
 
+    def test_started_from_the_browser_extension(self):
+        # Its right-click menu, video button and popup send links here, added in the background
+        with self.client() as api:
+            self.assertEqual(api.post("/api/remote/push", json={"url": "https://example.com/video.mp4"}).json(),
+                             {"status": "accepted"})
+            eventually(lambda: len(self.started) == 1)
+        self.assertEqual(self.started[0].url, "https://example.com/video.mp4")
+
+    def test_not_for_links_pushed_from_the_phone(self):
+        with self.client(ip="192.168.1.20", host="192.168.1.5") as phone:
+            phone.post("/api/remote/push?token=t", json={"url": "https://example.com/from-phone.bin"})
+            eventually(lambda: any(t.url.endswith("from-phone.bin") for t in self.engine.tasks.values()))
+        self.assertEqual(self.started, [])
+
     def test_setting_is_on_by_default(self):
         self.assertTrue(self.engine.settings.get("show_download_window"))
 

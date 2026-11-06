@@ -126,6 +126,21 @@ class TestLegacyMigration(TaskStoreTestCase):
         self.assertNotIn(late.id, self.engine().tasks, "the downloads folder should not be rescanned on every start")
 
 
+class TestClearCompleted(TaskStoreTestCase):
+    async def test_forgets_completed_downloads_but_keeps_their_files(self):
+        engine = self.engine()
+        path = os.path.join(self.download_dir, "done.bin")
+        with open(path, "wb") as f:
+            f.write(b"downloaded")
+        self.saved_task(engine, filename="done.bin", save_path=path, status=TaskStatus.COMPLETED)
+        paused = self.saved_task(engine, status=TaskStatus.PAUSED)
+
+        self.assertEqual(await engine.clear_completed(), 1)
+        self.assertEqual(set(engine.tasks), {paused.id})
+        self.assertTrue(os.path.exists(path), "only the list entry goes, not the file")
+        self.assertEqual(set(self.engine().tasks), {paused.id}, "it does not come back after a restart")
+
+
 class TestDuplicateNames(TaskStoreTestCase):
     async def test_same_link_twice_gets_separate_files(self):
         engine = self.engine()

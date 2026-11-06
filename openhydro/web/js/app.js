@@ -55,12 +55,31 @@ window.alert = function (msg) {
 let confirmCallback = null;
 
 // onOk receives the state of the optional checkbox (shown only when checkboxLabel is given)
-function showConfirm({ title = 'تأكيد الإجراء', message = 'هل أنت متأكد؟', okText = 'تأكيد', cancelText = 'إلغاء', onOk = null, isDanger = true, checkboxLabel = null }) {
+// Danger (red, delete) or a plain question (cyan): the icon and OK button match what OK does
+const CONFIRM_STYLES = {
+  danger: {
+    icon: 'w-14 h-14 mx-auto mb-4 rounded-2xl bg-rose-500/20 border border-rose-500/30 flex items-center justify-center text-2xl text-rose-400 shadow-lg shadow-rose-500/20',
+    ok: 'flex-1 py-2.5 px-4 rounded-xl text-xs font-semibold text-white bg-gradient-to-r from-rose-500 to-red-600 hover:from-rose-400 hover:to-red-500 shadow-lg shadow-rose-500/25 transition-all',
+  },
+  question: {
+    icon: 'w-14 h-14 mx-auto mb-4 rounded-2xl bg-cyan-500/20 border border-cyan-500/30 flex items-center justify-center text-2xl text-cyan-400 shadow-lg shadow-cyan-500/20',
+    ok: 'flex-1 py-2.5 px-4 rounded-xl text-xs font-semibold text-white bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 shadow-lg shadow-cyan-500/25 transition-all',
+  },
+};
+
+function showConfirm({ title = 'تأكيد الإجراء', message = 'هل أنت متأكد؟', okText = 'تأكيد', cancelText = 'إلغاء', onOk = null, isDanger = true, checkboxLabel = null, icon = null }) {
   const modal = document.getElementById('app-confirm-modal');
   if (!modal) {
     if (confirm(message)) onOk?.(false);
     return;
   }
+
+  const style = CONFIRM_STYLES[isDanger ? 'danger' : 'question'];
+  const iconBox = document.getElementById('confirm-modal-icon-bg');
+  iconBox.className = style.icon;
+  iconBox.innerHTML = `<i id="confirm-modal-icon" data-lucide="${icon || (isDanger ? 'trash-2' : 'help-circle')}" class="w-7 h-7"></i>`;
+  lucide.createIcons({ root: iconBox });
+  document.getElementById('confirm-modal-ok').className = style.ok;
 
   document.getElementById('confirm-modal-title').innerText = title;
   document.getElementById('confirm-modal-msg').innerText = message;
@@ -547,6 +566,31 @@ async function resumeAllTasks() {
   }
 }
 
+function clearCompletedTasks() {
+  const count = Object.values(tasks).filter(t => t.status === 'completed').length;
+  if (!count) {
+    showToast('مفيش تنزيلات مكتملة في القائمة', 'info');
+    return;
+  }
+  showConfirm({
+    title: 'مسح المكتملة من القائمة',
+    message: `هيتشال ${count} تنزيل مكتمل من القائمة. الملفات نفسها هتفضل في مكانها.`,
+    okText: 'مسح من القائمة',
+    isDanger: false,
+    icon: 'list-x',
+    onOk: async () => {
+      try {
+        const res = await fetch('/api/queue/clear_completed', { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'HTTP ' + res.status);
+        showToast(`تم مسح ${data.removed} من القائمة`, 'success');
+      } catch (e) {
+        showToast('تعذر مسح المكتملة: ' + e.message, 'error');
+      }
+    },
+  });
+}
+
 async function openTaskFile(id) {
   try {
     const res = await fetch(`/api/tasks/${id}/open_file`, { method: 'POST' });
@@ -866,7 +910,11 @@ function onQualityChanged() {
   }
 }
 
-async function submitNewTask() {
+const STATUS_NAMES = {
+  completed: 'مكتمل', downloading: 'جاري تنزيله', queued: 'في الانتظار', paused: 'متوقف مؤقتاً', error: 'فيه خطأ',
+};
+
+async function submitNewTask(downloadAgain = false) {
   const url = document.getElementById('modal-url-input').value.trim();
   const filename = document.getElementById('modal-filename-input').value.trim();
   const connections = parseInt(document.getElementById('modal-connections-select').value, 10);
@@ -877,6 +925,21 @@ async function submitNewTask() {
 
   if (!url) {
     showToast('يرجى إدخال رابط صالح', 'warning');
+    return;
+  }
+
+  // The same link is already in the list (IDM asks too): a second copy only on purpose
+  const existing = !downloadAgain && Object.values(tasks).find(t => t.url === url);
+  if (existing) {
+    showConfirm({
+      title: 'الرابط ده موجود في القائمة',
+      message: `"${existing.filename}" (${STATUS_NAMES[existing.status] || existing.status}). تنزّله مرة تانية في ملف جديد؟`,
+      okText: 'تنزيل مرة تانية',
+      cancelText: 'لا',
+      isDanger: false,
+      icon: 'copy',
+      onOk: () => submitNewTask(true),
+    });
     return;
   }
 

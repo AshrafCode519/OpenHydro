@@ -306,6 +306,18 @@ def create_app(
             raise HTTPException(status_code=404, detail="Task not found")
         return task.to_dict()
 
+    def show_download_window(task, req: AddTaskRequest, request: Request):
+        """
+        A download started on this PC (the add dialog, the browser extension's capture, right-click
+        menu, video button or popup) opens its window in the desktop app; not one added from the phone,
+        one added for later, or the items of a playlist (their own endpoint).
+        """
+        if on_download_started and req.auto_start and request.client and request.client.host in LOOPBACK_HOSTS:
+            try:
+                on_download_started(task)
+            except Exception as e:
+                print(f"[API] Download window: {e}")
+
     @app.post("/api/tasks")
     async def add_task(req: AddTaskRequest, request: Request):
         ensure_inside_download_dir(req.save_dir)
@@ -319,13 +331,7 @@ def create_app(
             auto_start=req.auto_start,
             format_id=req.format_id,
         )
-        # The add dialog and the browser extension on this PC (not the phone, not playlists, which
-        # have their own endpoint): the desktop app shows the download's progress window
-        if on_download_started and req.auto_start and request.client and request.client.host in LOOPBACK_HOSTS:
-            try:
-                on_download_started(task)
-            except Exception as e:
-                print(f"[API] Download window: {e}")
+        show_download_window(task, req, request)
         return task.to_dict()
 
     @app.post("/api/tasks/{task_id}/pause")
@@ -825,12 +831,12 @@ def create_app(
 
     # Browser extension / Remote Push trigger
     @app.post("/api/remote/push")
-    async def remote_push(req: AddTaskRequest):
+    async def remote_push(req: AddTaskRequest, request: Request):
         ensure_inside_download_dir(req.save_dir)
 
         async def _async_add():
             try:
-                await engine.add_download(
+                task = await engine.add_download(
                     url=req.url,
                     filename=req.filename,
                     save_dir=req.save_dir,
@@ -840,10 +846,14 @@ def create_app(
                     auto_start=req.auto_start,
                     format_id=req.format_id,
                 )
+                show_download_window(task, req, request)
             except Exception as e:
                 print(f"[RemotePush] Error in async add: {e}")
 
-        asyncio.create_task(_async_add())
+        # Referenced until done: an unreferenced task can be garbage-collected before it finishes
+        job = asyncio.create_task(_async_add())
+        background_jobs.add(job)
+        job.add_done_callback(background_jobs.discard)
         return {"status": "accepted"}
 
     # WebSocket for real-time telemetry

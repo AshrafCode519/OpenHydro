@@ -774,7 +774,6 @@ def create_app(
 
     @app.get("/api/extension/info")
     async def get_extension_info():
-        import subprocess
         if getattr(sys, "frozen", False):
             base_dir = getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
             exe_dir = os.path.dirname(sys.executable)

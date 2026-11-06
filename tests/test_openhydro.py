@@ -5,13 +5,11 @@ Tests dynamic segmentation, rate limiting, task state, and storage persistence.
 
 import os
 import shutil
-import asyncio
 import unittest
 
 from openhydro.core import (
     DownloadTask,
     Chunk,
-    TaskStatus,
     DynamicSegmenter,
     StorageManager,
     RateLimiter,
@@ -297,7 +295,7 @@ segment_1.ts
 
     def test_storage_metadata_persistence(self):
         from openhydro.core.storage import StorageManager
-        from openhydro.core.task import DownloadTask, TaskStatus
+        from openhydro.core.task import DownloadTask
         import tempfile
         with tempfile.TemporaryDirectory() as td:
             target = os.path.join(td, "test_video.mp4")

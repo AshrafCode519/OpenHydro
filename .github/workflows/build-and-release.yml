@@ -46,7 +46,7 @@ jobs:
           }
 
       # Includes the dashboard UI tests (tests/test_ui.py), which use the runner's preinstalled Edge
-      - name: Lint (undefined names) and Run Tests
+      - name: Lint (undefined names, unused imports) and Run Tests
         shell: bash
         env:
           PYTHONIOENCODING: utf-8
@@ -54,7 +54,7 @@ jobs:
           OPENHYDRO_CLIPBOARD_TESTS: "1"
         run: |
           pip install ruff
-          ruff check --select F821,F822,F823 run.py openhydro tests
+          ruff check --select F821,F822,F823,F401,F841 run.py openhydro tests
           # Failures also become annotations: readable on the run's page without the full log
           set +e
           python -m unittest discover -s tests -v 2>&1 | tee test-output.log

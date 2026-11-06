@@ -5,7 +5,6 @@ Covers dynamic splitting, chunk retries, HEAD-less size probing, and servers tha
 
 import os
 import re
-import time
 import shutil
 import asyncio
 import tempfile

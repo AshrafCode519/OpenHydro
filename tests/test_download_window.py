@@ -3,7 +3,6 @@ Download window tests for OpenHydro (IDM-style progress window)
 Which downloads open one, one window per download, and the calls the page makes into the window.
 """
 
-import os
 import shutil
 import tempfile
 import time

@@ -11,7 +11,7 @@ import shutil
 import asyncio
 import subprocess
 from urllib.parse import urljoin
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional
 import httpx
 
 from .limiter import RateLimiter

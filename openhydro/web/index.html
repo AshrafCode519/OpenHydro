@@ -891,10 +891,11 @@
   <script src="/static/js/app.js"></script>
   <script>
     lucide.createIcons();
+    // No service worker any more (see static/sw.js): remove one an earlier version registered
     if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/static/sw.js').catch(() => {});
-      });
+      navigator.serviceWorker.getRegistrations()
+        .then(registrations => registrations.forEach(r => r.unregister()))
+        .catch(() => {});
     }
   </script>
 </body>

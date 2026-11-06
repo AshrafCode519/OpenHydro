@@ -7,7 +7,6 @@ downloads installers via OpenHydro turbo engine, and launches updates.
 import os
 import re
 import sys
-import asyncio
 import subprocess
 from typing import Dict, Optional, Tuple
 from urllib.parse import urlparse, unquote

@@ -354,6 +354,10 @@ def create_app(
         await engine.resume_all()
         return {"status": "resuming"}
 
+    @app.post("/api/queue/clear_completed")
+    async def clear_completed_tasks():
+        return {"removed": await engine.clear_completed()}
+
     @app.post("/api/tasks/{task_id}/refresh_url")
     async def refresh_url(task_id: str, req: RefreshUrlRequest):
         task = engine.tasks.get(task_id)

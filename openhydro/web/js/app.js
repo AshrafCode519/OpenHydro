@@ -1195,12 +1195,17 @@ async function loadFfmpegStatus() {
   }
 }
 
+// Counts progress/ready/failed events: the answer to the install request can arrive after them
+let ffmpegEvents = 0;
+
 async function installFfmpeg() {
+  const eventsBefore = ffmpegEvents;
   try {
     const res = await fetch('/api/components/ffmpeg/install', { method: 'POST' });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || 'HTTP ' + res.status);
-    renderFfmpegStatus(data);
+    // A newer state already came over the WebSocket ("ready"): do not show "installing" over it
+    if (ffmpegEvents === eventsBefore) renderFfmpegStatus(data);
   } catch (e) {
     showToast('تعذر بدء تنزيل ffmpeg: ' + e.message, 'error');
   }
@@ -1208,6 +1213,7 @@ async function installFfmpeg() {
 
 function handleComponentEvent(type, data) {
   if (!data || data.name !== 'ffmpeg') return;
+  ffmpegEvents++;
   if (type === 'component_progress') {
     renderFfmpegStatus({ supported: true, installing: true, progress: data });
   } else if (type === 'component_ready') {

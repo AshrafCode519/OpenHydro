@@ -1,5 +1,6 @@
 const OPENHYDRO_API = "http://127.0.0.1:8765/api/system";
-const PUSH_API = "http://127.0.0.1:8765/api/remote/push";
+// Opens OpenHydro's add dialog with the link: it shows what the link is (video qualities, file size)
+const ADD_DIALOG_API = "http://127.0.0.1:8765/api/app/add_dialog";
 
 async function checkStatus() {
   const dot = document.getElementById("status-dot");
@@ -31,16 +32,13 @@ document.getElementById("send-btn").addEventListener("click", async () => {
   }
 
   try {
-    const res = await fetch(PUSH_API, {
+    const res = await fetch(ADD_DIALOG_API, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: url, num_connections: 8, auto_start: true })
+      body: JSON.stringify({ url: url })
     });
-    if (res.ok) {
-      input.value = "";
-      alert("تم إرسال الرابط للتحميل بنجاح!");
-      window.close();
-    }
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    window.close();  // the choice (quality, name) is made in OpenHydro's window
   } catch (e) {
     alert("تعذر الاتصال بالتطبيق");
   }

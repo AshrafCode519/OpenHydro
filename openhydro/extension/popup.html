@@ -4,97 +4,383 @@
   <meta charset="UTF-8">
   <title>OpenHydro Integrator</title>
   <style>
-    body {
-      width: 320px;
+    * {
+      box-sizing: border-box;
       margin: 0;
-      padding: 16px;
-      background: #0b0f19;
-      color: #f3f4f6;
-      font-family: system-ui, -apple-system, sans-serif;
-      font-size: 13px;
+      padding: 0;
     }
+
+    body {
+      width: 360px;
+      padding: 18px;
+      background: radial-gradient(circle at 50% 0%, #172033 0%, #0b0f19 75%);
+      color: #f3f4f6;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      font-size: 13px;
+      line-height: 1.5;
+      user-select: none;
+    }
+
+    /* Header */
     .header {
       display: flex;
       align-items: center;
-      gap: 8px;
-      margin-bottom: 12px;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-      padding-bottom: 8px;
+      justify-content: space-between;
+      margin-bottom: 14px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
     }
-    .title {
-      font-weight: bold;
-      color: #22d3ee;
-    }
-    .status {
+
+    .brand {
       display: flex;
       align-items: center;
-      gap: 6px;
-      font-size: 12px;
-      margin-bottom: 12px;
+      gap: 10px;
     }
+
+    .logo-badge {
+      width: 32px;
+      height: 32px;
+      border-radius: 10px;
+      background: linear-gradient(135deg, rgba(6, 182, 212, 0.2), rgba(59, 130, 246, 0.2));
+      border: 1px solid rgba(34, 211, 238, 0.3);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #22d3ee;
+      box-shadow: 0 0 15px rgba(6, 182, 212, 0.25);
+    }
+
+    .logo-badge svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    .title {
+      font-size: 14px;
+      font-weight: 700;
+      background: linear-gradient(90deg, #22d3ee, #60a5fa);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      letter-spacing: -0.2px;
+    }
+
+    .subtitle {
+      font-size: 10px;
+      color: #94a3b8;
+    }
+
+    .version-tag {
+      font-size: 10px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: #94a3b8;
+      font-family: ui-monospace, SFMono-Regular, monospace;
+    }
+
+    /* Status Card */
+    .status-card {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 12px;
+      margin-bottom: 14px;
+    }
+
+    .dot-wrapper {
+      position: relative;
+      width: 10px;
+      height: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
     .dot {
       width: 8px;
       height: 8px;
       border-radius: 50%;
       background: #10b981;
+      transition: background 0.3s ease;
+      box-shadow: 0 0 10px currentColor;
     }
-    .btn {
-      width: 100%;
-      padding: 8px;
-      background: linear-gradient(90deg, #06b6d4, #3b82f6);
-      color: white;
-      border: none;
-      border-radius: 8px;
-      font-weight: bold;
-      cursor: pointer;
-      margin-top: 8px;
+
+    .status-text {
+      font-size: 11.5px;
+      color: #cbd5e1;
+      font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
-    .btn:hover {
-      opacity: 0.9;
-    }
-    .capture {
+
+    /* Modern Toggle Section */
+    .capture-card {
       display: flex;
       align-items: center;
-      gap: 8px;
-      margin-bottom: 12px;
-      font-size: 12px;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 12px;
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid rgba(255, 255, 255, 0.07);
+      border-radius: 12px;
+      margin-bottom: 14px;
       cursor: pointer;
+      transition: all 0.2s ease;
     }
-    .capture input {
-      width: auto;
-      margin: 0;
+
+    .capture-card:hover {
+      border-color: rgba(34, 211, 238, 0.25);
+      background: rgba(15, 23, 42, 0.85);
     }
-    input {
-      width: 100%;
-      padding: 8px;
-      box-sizing: border-box;
-      background: #1f2937;
-      border: 1px solid rgba(255, 255, 255, 0.1);
-      border-radius: 8px;
-      color: white;
+
+    .capture-info {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .capture-title {
       font-size: 12px;
+      font-weight: 600;
+      color: #e2e8f0;
+    }
+
+    .capture-desc {
+      font-size: 10.5px;
+      color: #64748b;
+    }
+
+    /* Switch Component */
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 36px;
+      height: 20px;
+      flex-shrink: 0;
+    }
+
+    .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #334155;
+      transition: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      border-radius: 20px;
+    }
+
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 14px;
+      width: 14px;
+      left: 3px;
+      bottom: 3px;
+      background-color: #ffffff;
+      transition: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      border-radius: 50%;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+    }
+
+    input:checked + .slider {
+      background: linear-gradient(135deg, #06b6d4, #3b82f6);
+      box-shadow: 0 0 12px rgba(6, 182, 212, 0.4);
+    }
+
+    input:checked + .slider:before {
+      transform: translateX(16px);
+    }
+
+    /* Input Section */
+    .input-section {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-bottom: 12px;
+    }
+
+    .input-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: #94a3b8;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .input-wrapper {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+
+    .input-icon {
+      position: absolute;
+      right: 12px;
+      color: #64748b;
+      pointer-events: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .input-icon svg {
+      width: 15px;
+      height: 15px;
+    }
+
+    input[type="text"] {
+      width: 100%;
+      padding: 10px 38px 10px 12px;
+      background: rgba(15, 23, 42, 0.8);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 12px;
+      color: #ffffff;
+      font-size: 12px;
+      font-family: inherit;
+      outline: none;
+      transition: all 0.25s ease;
+      box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.3);
+    }
+
+    input[type="text"]:focus {
+      border-color: #22d3ee;
+      box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.2), inset 0 1px 2px rgba(0, 0, 0, 0.2);
+      background: rgba(15, 23, 42, 0.95);
+    }
+
+    input[type="text"]::placeholder {
+      color: #475569;
+    }
+
+    /* Button */
+    .btn {
+      width: 100%;
+      padding: 11px 16px;
+      background: linear-gradient(135deg, #06b6d4 0%, #2563eb 100%);
+      color: #ffffff;
+      border: none;
+      border-radius: 12px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      box-shadow: 0 4px 16px -2px rgba(6, 182, 212, 0.35);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 20px -2px rgba(6, 182, 212, 0.5);
+      filter: brightness(1.06);
+    }
+
+    .btn:active {
+      transform: translateY(1px);
+      box-shadow: 0 2px 10px -2px rgba(6, 182, 212, 0.3);
+    }
+
+    .btn svg {
+      width: 16px;
+      height: 16px;
+    }
+
+    /* Footer Note */
+    .footer-note {
+      text-align: center;
+      font-size: 10px;
+      color: #475569;
+      margin-top: 10px;
     }
   </style>
 </head>
 <body>
+  <!-- Header -->
   <div class="header">
-    <span class="title">⚡ OpenHydro Integrator</span>
+    <div class="brand">
+      <div class="logo-badge">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+        </svg>
+      </div>
+      <div>
+        <div class="title">OpenHydro Integrator</div>
+        <div class="subtitle">التكامل الذكي مع المتصفح</div>
+      </div>
+    </div>
+    <span class="version-tag">v1.3.1</span>
   </div>
 
-  <div class="status">
-    <div id="status-dot" class="dot"></div>
-    <span id="status-text">جاري فحص الاتصال بالمحرك...</span>
+  <!-- Status Card -->
+  <div class="status-card">
+    <div class="dot-wrapper">
+      <div id="status-dot" class="dot"></div>
+    </div>
+    <span id="status-text" class="status-text">جاري فحص الاتصال بالمحرك...</span>
   </div>
 
-  <label class="capture">
-    <input type="checkbox" id="capture-toggle" />
-    <span>التقاط تحميلات المتصفح تلقائياً (برامج، فيديو، أرشيفات...)</span>
+  <!-- Capture Toggle Card -->
+  <label class="capture-card" for="capture-toggle">
+    <div class="capture-info">
+      <span class="capture-title">التقاط التحميلات تلقائياً</span>
+      <span class="capture-desc">البرامج، مقاطع الفيديو، الملفات والأرشيفات</span>
+    </div>
+    <div class="switch">
+      <input type="checkbox" id="capture-toggle" />
+      <span class="slider"></span>
+    </div>
   </label>
 
-  <input type="text" id="link-input" placeholder="ألصق رابط التحميل هنا..." />
-  <button id="send-btn" class="btn">إرسال إلى OpenHydro</button>
+  <!-- Input Section -->
+  <div class="input-section">
+    <div class="input-label">
+      <span>رابط التحميل أو الفيديو</span>
+    </div>
+    <div class="input-wrapper">
+      <span class="input-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+          <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+        </svg>
+      </span>
+      <input type="text" id="link-input" placeholder="ألصق رابط التحميل هنا (YouTube، مواقع الفيديو، ملفات...)" dir="ltr" />
+    </div>
+  </div>
+
+  <!-- Action Button -->
+  <button id="send-btn" class="btn" title="يفتح نافذة التنزيل في OpenHydro لاختيار الجودة">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+      <polyline points="7 10 12 15 17 10"></polyline>
+      <line x1="12" y1="15" x2="12" y2="3"></line>
+    </svg>
+    <span>إرسال إلى OpenHydro واختيار الجودة</span>
+  </button>
+
+  <div class="footer-note">
+    يفتح نافذة الاختيار لاختيار الجودة أو المسارات
+  </div>
 
   <script src="popup.js"></script>
 </body>
 </html>
-

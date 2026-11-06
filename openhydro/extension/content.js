@@ -131,19 +131,20 @@
     const rect = video.getBoundingClientRect();
     if (rect.width < 140 && rect.height < 90) return;
 
-    let container = video.parentElement;
-    if (window.location.hostname.includes("youtube.com")) {
-      const player = document.getElementById("movie_player") || document.querySelector(".html5-video-player");
-      if (player) container = player;
+    // YouTube: inside its player (it works there, fullscreen included). Every other site: outside the
+    // player, at the top of the page, following the video. Players lay a click-catching layer over
+    // the video that sits above anything put inside them, so a button there could not be clicked.
+    const onYouTube = window.location.hostname.includes("youtube.com");
+    let container = null;
+    if (onYouTube) {
+      container = document.getElementById("movie_player") || document.querySelector(".html5-video-player") ||
+        video.parentElement;
+      if (!container) return;
+      if (window.getComputedStyle(container).position === "static") {
+        container.classList.add("openhydro-video-container-relative");
+      }
     }
-
-    if (!container) return;
     video.dataset.openhydroAttached = "true";
-
-    const style = window.getComputedStyle(container);
-    if (style.position === "static") {
-      container.classList.add("openhydro-video-container-relative");
-    }
 
     // Create wrapper
     const wrapper = document.createElement("div");
@@ -151,8 +152,10 @@
 
     // Detect platform for default positioning
     const isFacebook = window.location.hostname.includes("facebook.com") || window.location.hostname.includes("fb.watch");
-    const savedPos = localStorage.getItem("openhydro_btn_pos");
-    if (savedPos) {
+    const savedPos = onYouTube ? localStorage.getItem("openhydro_btn_pos") : null;
+    if (!onYouTube) {
+      // Placed next to its video by placeFloating()
+    } else if (savedPos) {
       try {
         const parsed = JSON.parse(savedPos);
         if (parsed.top !== undefined && parsed.left !== undefined) {
@@ -191,7 +194,7 @@
 
     const dragHandle = btn.querySelector(".openhydro-drag-handle");
     dragHandle.addEventListener("mousedown", (e) => {
-      if (e.button !== 0) return;
+      if (e.button !== 0 || !container) return;  // a floating button follows its video instead
       isDragging = true;
       hasMoved = false;
       dragStartX = e.clientX;
@@ -251,6 +254,7 @@
     let isMenuOpen = false;
     let cachedQualities = null;
     let lastMediaUrl = null;
+    let noVideoHere = false;  // the app found no video at this address (a page it cannot read)
 
     function openMenu() {
       if (hideTimer) {
@@ -278,6 +282,7 @@
       const mediaUrl = getMediaUrl(video);
       if (lastMediaUrl !== mediaUrl) {
         cachedQualities = null;
+        noVideoHere = false;
         lastMediaUrl = mediaUrl;
       }
       renderMenuContents(mediaUrl, cachedQualities);
@@ -298,11 +303,15 @@
         chrome.runtime.sendMessage(
           { action: "probe_url", url: mediaUrl },
           (response) => {
-            if (response && response.qualities && response.qualities.length > 0) {
+            if (response && response.is_web_page) {
+              noVideoHere = true;
+            } else if (response && response.qualities && response.qualities.length > 0) {
               cachedQualities = response.qualities;
-              if (menu && isMenuOpen) {
-                renderMenuContents(mediaUrl, cachedQualities);
-              }
+            } else {
+              return;
+            }
+            if (menu && isMenuOpen) {
+              renderMenuContents(mediaUrl, cachedQualities);
             }
           }
         );
@@ -341,6 +350,20 @@
           <button class="openhydro-menu-close" title="إغلاق">✕</button>
         </div>
       `;
+
+      if (noVideoHere) {
+        menu.innerHTML = header + `
+          <div class="openhydro-menu-section">⚠️ مفيش فيديو قدرنا نلاقيه هنا</div>
+          <div class="openhydro-item-label" style="padding: 8px 12px !important; opacity: 0.85;">
+            الموقع ده بيشغّل الفيديو بطريقة OpenHydro مش بيقدر ينزّلها.
+          </div>
+        `;
+        menu.querySelector(".openhydro-menu-close")?.addEventListener("click", (e) => {
+          e.stopPropagation();
+          closeMenu();
+        });
+        return;
+      }
 
       let videoItems = [];
       let audioItems = [];
@@ -500,8 +523,59 @@
     });
 
     wrapper.appendChild(btn);
-    container.appendChild(wrapper);
+    if (onYouTube) {
+      container.appendChild(wrapper);
+    } else {
+      wrapper.classList.add("openhydro-floating");
+      floating.set(wrapper, video);
+      placeFloating(wrapper, video);
+    }
   }
+
+  // --- Floating buttons (every site but YouTube): kept next to their video ---
+  const floating = new Map();  // wrapper -> its video
+
+  function placeFloating(wrapper, video) {
+    if (!video.isConnected) {
+      wrapper.remove();
+      floating.delete(wrapper);
+      return;
+    }
+    // Fullscreen shows only the fullscreen element: the button goes in with its video
+    const fullscreen = document.fullscreenElement;
+    const host = fullscreen && fullscreen.contains(video) ? fullscreen : document.documentElement;
+    if (wrapper.parentElement !== host) host.appendChild(wrapper);
+
+    const r = video.getBoundingClientRect();
+    const shown = r.width >= 140 && r.height >= 90 && r.bottom > 0 && r.right > 0 &&
+      r.top < window.innerHeight && r.left < window.innerWidth && (!fullscreen || host === fullscreen);
+    wrapper.style.setProperty("display", shown ? "block" : "none", "important");
+    if (!shown) return;
+
+    const h = wrapper.offsetHeight || 34;
+    const w = wrapper.offsetWidth || 150;
+    let top = r.top - h - 6;  // above the video, outside the player
+    if (top < 4) top = r.bottom + 6;  // or under it
+    if (top + h > window.innerHeight - 4) top = Math.max(4, r.top + 8);  // or inside its top edge
+    const left = Math.min(Math.max(4, r.left), window.innerWidth - w - 4);
+    wrapper.style.setProperty("top", `${top}px`, "important");
+    wrapper.style.setProperty("left", `${left}px`, "important");
+  }
+
+  let placePending = false;
+  function placeAllFloating() {
+    if (placePending) return;
+    placePending = true;
+    requestAnimationFrame(() => {
+      placePending = false;
+      floating.forEach((video, wrapper) => placeFloating(wrapper, video));
+    });
+  }
+
+  window.addEventListener("scroll", placeAllFloating, { capture: true, passive: true });
+  window.addEventListener("resize", placeAllFloating, { passive: true });
+  document.addEventListener("fullscreenchange", placeAllFloating);
+  setInterval(placeAllFloating, 500);  // layout changes no event reports (players resizing, ads loading)
 
   // Click outside to close
   document.addEventListener("click", (e) => {

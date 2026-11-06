@@ -80,6 +80,18 @@ class VideoExtractor:
             return False
 
     @staticmethod
+    def has_site_extractor(url: str) -> bool:
+        """
+        yt-dlp has an extractor made for this site (it knows over 1800), not only its generic one: a
+        page there is a video page, not a file. Blocking (first call compiles the patterns): use a thread.
+        """
+        try:
+            from yt_dlp.extractor import gen_extractor_classes
+            return any(ie.ie_key() != "Generic" and ie.suitable(url) for ie in gen_extractor_classes())
+        except Exception:
+            return False
+
+    @staticmethod
     def is_playlist_url(url: str) -> bool:
         """Determines if the URL points to a full playlist, album, Google Drive folder, or batch list."""
         try:
@@ -341,6 +353,8 @@ class VideoExtractor:
             "total_bytes": approx_size,
             "qualities": qualities,
             "has_subtitles": has_subtitles or bool(yt_id),
+            # Something to download was found (qualities always carry a "best" fallback)
+            "has_media": bool(raw_formats or info.get("url")),
         }
 
     @classmethod

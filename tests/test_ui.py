@@ -251,9 +251,22 @@ class TestSettingsPage(DashboardTestCase):
             self.browser.evaluate("openSettingsModal()")
             self.browser.wait_for("!document.getElementById('set-ffmpeg-install').classList.contains('hidden')",
                                   message="no download button while ffmpeg is missing")
-            self.browser.evaluate("document.getElementById('set-ffmpeg-install').click()")
+            # The answer to the click arrives after "ready" (seen on CI's slower machine): it must not
+            # put "downloading" back over the finished state
+            self.browser.evaluate("""
+              const realFetch = window.fetch;
+              window.fetch = async (url, options) => {
+                const res = await realFetch(url, options);
+                if (String(url).includes('/api/components/ffmpeg/install')) await new Promise(r => setTimeout(r, 1500));
+                return res;
+              };
+              document.getElementById('set-ffmpeg-install').click();
+            """)
             self.browser.wait_for("document.getElementById('set-ffmpeg-status').textContent.includes('N-1-test')",
                                   message="the finished download was not shown")
+            time.sleep(2)
+            self.assertIn("N-1-test", self.browser.evaluate("document.getElementById('set-ffmpeg-status').textContent"),
+                          "the late answer replaced the finished state")
         ensure_mock.assert_called_once()
         self.assertTrue(self.browser.evaluate("document.getElementById('set-ffmpeg-install').classList.contains('hidden')"))
         self.assertNoJsErrors()

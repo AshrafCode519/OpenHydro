@@ -31,6 +31,7 @@ class TorrentManager:
         self._legacy_checked = False
         self._log = None
         self.last_start_error: Optional[str] = None  # shown to the user when torrents cannot start
+        self.overall_limit = 0  # bytes/s for all torrents together (the global speed limit); 0: none
         self.binary_path = self._locate_binary()
         atexit.register(self.stop)
 
@@ -189,6 +190,7 @@ class TorrentManager:
             "--allow-overwrite=true",
             "--summary-interval=0",
             "--quiet=true",
+            f"--max-overall-download-limit={self.overall_limit}",
         ]
 
     def _payload(self, method: str, params: List[Any] = None, authenticated: bool = True) -> Dict[str, Any]:
@@ -230,15 +232,31 @@ class TorrentManager:
             raise RuntimeError(data["error"].get("message", "aria2 RPC error"))
         return data.get("result")
 
-    async def add_magnet(self, magnet_uri: str, save_dir: Optional[str] = None) -> str:
-        """Adds magnet link to torrent downloader. Returns GID."""
+    @staticmethod
+    def _options(save_dir: Optional[str], limit: int) -> Dict[str, str]:
         options = {}
         if save_dir:
             options["dir"] = save_dir
-        gid = await self._call("aria2.addUri", [[magnet_uri], options])
+        if limit > 0:
+            options["max-download-limit"] = str(limit)
+        return options
+
+    async def add_magnet(self, magnet_uri: str, save_dir: Optional[str] = None, limit: int = 0) -> str:
+        """Adds magnet link to torrent downloader (limit: bytes/s, 0 = none). Returns GID."""
+        gid = await self._call("aria2.addUri", [[magnet_uri], self._options(save_dir, limit)])
         return gid
 
-    async def add_torrent_file(self, file_path_or_bytes: Any, save_dir: Optional[str] = None) -> str:
+    async def set_download_limit(self, gid: str, limit: int):
+        """This torrent's own speed limit in bytes/s (0: none), applied while it runs."""
+        await self._call("aria2.changeOption", [gid, {"max-download-limit": str(max(0, limit))}])
+
+    async def set_overall_limit(self, limit: int):
+        """The global speed limit for all torrents; used at the next start if aria2 is not running."""
+        self.overall_limit = max(0, limit)
+        if self._proc and self._proc.poll() is None:
+            await self._call("aria2.changeGlobalOption", [{"max-overall-download-limit": str(self.overall_limit)}])
+
+    async def add_torrent_file(self, file_path_or_bytes: Any, save_dir: Optional[str] = None, limit: int = 0) -> str:
         """Adds .torrent file to downloader. Returns GID."""
         if isinstance(file_path_or_bytes, str) and os.path.exists(file_path_or_bytes):
             with open(file_path_or_bytes, "rb") as f:
@@ -247,10 +265,7 @@ class TorrentManager:
             content = file_path_or_bytes
 
         b64 = base64.b64encode(content).decode("ascii")
-        options = {}
-        if save_dir:
-            options["dir"] = save_dir
-        gid = await self._call("aria2.addTorrent", [b64, [], options])
+        gid = await self._call("aria2.addTorrent", [b64, [], self._options(save_dir, limit)])
         return gid
 
     async def tell_status(self, gid: str) -> Optional[Dict[str, Any]]:

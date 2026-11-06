@@ -360,6 +360,14 @@ function renderTaskCard(task) {
     </span>
   ` : '';
 
+  // This download's own speed limit (set from its download window)
+  const limitBadge = task.speed_limit_kbps > 0 && !isCompleted ? `
+    <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-purple-500/10 text-purple-300 border border-purple-500/30" title="حد سرعة التنزيل ده">
+      <i data-lucide="gauge" class="w-3 h-3"></i>
+      <span dir="ltr">${formatSpeed(task.speed_limit_kbps * 1024)}</span>
+    </span>
+  ` : '';
+
   // Segment visualization html
   const chunksHtml = task.chunks && task.chunks.length > 0 ? `
     <div class="mt-3 pt-3 border-t border-white/5">
@@ -393,6 +401,7 @@ function renderTaskCard(task) {
               <h3 class="font-semibold text-sm text-gray-100 truncate" title="${escapeHtml(task.filename)}">${escapeHtml(task.filename)}</h3>
               ${statusBadge}
               ${torrentBadge}
+              ${limitBadge}
             </div>
             <p class="text-xs text-gray-400 truncate mt-0.5 font-mono">${escapeHtml(task.url)}</p>
             ${task.phase ? `<p class="text-[11px] text-amber-300 truncate mt-0.5" title="${escapeHtml(task.phase)}">${escapeHtml(task.phase)}</p>` : ''}

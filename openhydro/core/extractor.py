@@ -9,6 +9,7 @@ import re
 import glob
 import time
 import asyncio
+import threading
 from typing import Dict, List, Optional, Callable
 from urllib.parse import urlparse, parse_qs
 
@@ -352,6 +353,7 @@ class VideoExtractor:
         on_progress: Optional[Callable] = None,
         is_cancelled: Optional[Callable] = None,
         http_headers: Optional[Dict[str, str]] = None,
+        rate_limiter=None,
     ) -> Optional[str]:
         """
         Executes download for Video, Audio, or Subtitle/Text transcript with multi-threaded concurrent fragment downloads.
@@ -359,7 +361,8 @@ class VideoExtractor:
         """
         url = cls.normalize_url(url)
         return await asyncio.to_thread(
-            cls._sync_download, url, output_path, format_selector, num_connections, on_progress, is_cancelled, http_headers
+            cls._sync_download, url, output_path, format_selector, num_connections, on_progress, is_cancelled, http_headers,
+            rate_limiter,
         )
 
     @staticmethod
@@ -417,6 +420,7 @@ class VideoExtractor:
         on_progress: Optional[Callable],
         is_cancelled: Optional[Callable],
         http_headers: Optional[Dict[str, str]] = None,
+        rate_limiter=None,
     ) -> Optional[str]:
         import yt_dlp
 
@@ -431,9 +435,25 @@ class VideoExtractor:
         if not ffmpeg_bin:
             format_selector = cls.without_merging(format_selector)
 
+        # The speed limits (global and this download's own). yt-dlp reports each block it writes, from
+        # every fragment thread: waiting here holds its download to the limit
+        reported: Dict[str, int] = {}
+        reported_lock = threading.Lock()
+
+        def throttle(d):
+            with reported_lock:
+                key = d.get("filename") or ""  # per file: the video, then the audio
+                done = d.get("downloaded_bytes") or 0
+                new_bytes = done - reported.get(key, 0)
+                reported[key] = max(done, reported.get(key, 0))
+            if new_bytes > 0:
+                rate_limiter.acquire_blocking(new_bytes)
+
         def progress_hook(d):
             if is_cancelled and is_cancelled():
                 raise asyncio.CancelledError("Download cancelled by user")
+            if rate_limiter and d["status"] == "downloading":
+                throttle(d)
 
             if d["status"] == "downloading" and on_progress:
                 downloaded = d.get("downloaded_bytes", 0)

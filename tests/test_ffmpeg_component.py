@@ -215,6 +215,20 @@ class TestVideoDownloadPreparesFfmpeg(unittest.IsolatedAsyncioTestCase):
         self.assertIn("ffmpeg غير متاح: التنزيل بأفضل جودة لا تحتاج دمج", [p for _, p in self.events])
         self.assertEqual(self.task.status, TaskStatus.COMPLETED)
 
+    async def test_says_why_when_nothing_could_be_downloaded(self):
+        # No ffmpeg and no single-file format (e.g. YouTube without a JS runtime): explain, not "failed"
+        self.download.return_value = None
+        with mock.patch.object(ffmpeg_component, "supported", return_value=True), \
+                mock.patch.object(ffmpeg_component, "ensure", side_effect=OSError("GitHub blocked")):
+            await self.engine._execute_extractor_download(self.task)
+        self.assertEqual(self.task.status, TaskStatus.ERROR)
+        self.assertIn("محتاج ffmpeg", self.task.error_message)
+
+        self.task.status = TaskStatus.DOWNLOADING
+        with mock.patch.object(HLSDownloader, "find_ffmpeg", return_value="ffmpeg.exe"):
+            await self.engine._execute_extractor_download(self.task)
+        self.assertEqual(self.task.error_message, "فشل تحميل الفيديو من المنصة", "other failures keep the usual message")
+
     async def test_not_needed_for_original_audio(self):
         self.task.selected_format = "audio_m4a"
         with mock.patch.object(ffmpeg_component, "ensure") as ensure_mock:

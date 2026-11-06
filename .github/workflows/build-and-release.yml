@@ -55,7 +55,15 @@ jobs:
         run: |
           pip install ruff
           ruff check --select F821,F822,F823 run.py openhydro tests
-          python -m unittest discover -s tests -v
+          # Failures also become annotations: readable on the run's page without the full log
+          set +e
+          python -m unittest discover -s tests -v 2>&1 | tee test-output.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" -ne 0 ]; then
+            python .github/scripts/test_failures_to_annotations.py test-output.log
+            exit "$status"
+          fi
           node --test tests/extension/*.test.js
 
       - name: Build Executable with PyInstaller

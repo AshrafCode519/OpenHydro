@@ -17,7 +17,7 @@ import httpx
 from .task import DownloadTask, Chunk, TaskStatus
 from .segmenter import DynamicSegmenter
 from .storage import StorageManager, TaskStore
-from .limiter import RateLimiter
+from .limiter import RateLimiter, LimiterChain
 from .worker import ChunkWorker, DEFAULT_USER_AGENT, MAX_RETRIES, RETRY_BACKOFF_BASE, shared_ssl_context, shared_ssl_context_async
 from .hls import HLSStreamParser, HLSDownloader
 from .scheduler import SmartScheduler
@@ -48,12 +48,14 @@ class DownloadEngine:
         self.download_dir = download_dir or self.settings.get("download_dir") or StorageManager.get_default_download_dir()
         self.tasks: Dict[str, DownloadTask] = {}
         self.rate_limiter = RateLimiter(self.settings.get("speed_limit_kbps") * 1024)
+        self._task_limiters: Dict[str, RateLimiter] = {}  # each download's own limit (speed_limit_kbps)
         self._running_loops: Dict[str, asyncio.Task] = {}
         self._listeners: List[Callable] = []
         self._last_progress_event: Dict[str, float] = {}
         self._lock = threading.Lock()
         self.scheduler = SmartScheduler(self, max_active_downloads=self.settings.get("max_active_downloads"))
         self.torrent_manager = TorrentManager(self.download_dir)
+        self.torrent_manager.overall_limit = self.rate_limiter.max_bytes_per_second
         self._loop: Optional[asyncio.AbstractEventLoop] = None
 
         # Load the CA bundle now, off the event loop: on a busy machine it takes seconds and
@@ -519,7 +521,7 @@ class DownloadEngine:
                 task=task,
                 file_path=part_path,
                 file_lock=file_lock,
-                rate_limiter=self.rate_limiter,
+                rate_limiter=self.limiter_for(task),
                 on_chunk_progress=lambda: self._notify("task_progress", task),
             )
             workers.append(worker)
@@ -724,6 +726,7 @@ class DownloadEngine:
             if VideoExtractor.needs_ffmpeg(fmt) and not HLSDownloader.find_ffmpeg():
                 await self._prepare_ffmpeg(task)
             final_path = await VideoExtractor.download(
+                rate_limiter=self.limiter_for(task),
                 url=task.url,
                 output_path=task.save_path,
                 format_selector=fmt,
@@ -868,7 +871,7 @@ class DownloadEngine:
                 segments=segments,
                 temp_dir=temp_dir,
                 num_connections=task.num_connections or 8,
-                rate_limiter=self.rate_limiter,
+                rate_limiter=self.limiter_for(task),
                 on_progress=on_hls_progress,
                 is_cancelled=lambda: task.status != TaskStatus.DOWNLOADING,
                 headers=hls_headers,
@@ -938,17 +941,17 @@ class DownloadEngine:
             # If GID doesn't exist yet, add URI or .torrent file
             if not task.torrent_gid:
                 if task.url.startswith("magnet:"):
-                    gid = await self.torrent_manager.add_magnet(task.url, save_dir=target_save_dir)
+                    gid = await self.torrent_manager.add_magnet(task.url, save_dir=target_save_dir, limit=task.speed_limit_kbps * 1024)
                 elif task.url.lower().endswith(".torrent"):
                     if os.path.exists(task.url):
-                        gid = await self.torrent_manager.add_torrent_file(task.url, save_dir=target_save_dir)
+                        gid = await self.torrent_manager.add_torrent_file(task.url, save_dir=target_save_dir, limit=task.speed_limit_kbps * 1024)
                     else:
                         async with httpx.AsyncClient(timeout=15.0, verify=await shared_ssl_context_async()) as client:
                             r = await client.get(task.url, follow_redirects=True)
                             r.raise_for_status()
-                            gid = await self.torrent_manager.add_torrent_file(r.content, save_dir=target_save_dir)
+                            gid = await self.torrent_manager.add_torrent_file(r.content, save_dir=target_save_dir, limit=task.speed_limit_kbps * 1024)
                 else:
-                    gid = await self.torrent_manager.add_magnet(task.url, save_dir=target_save_dir)
+                    gid = await self.torrent_manager.add_magnet(task.url, save_dir=target_save_dir, limit=task.speed_limit_kbps * 1024)
                 task.torrent_gid = gid
                 self.store.save(task)
             else:
@@ -972,9 +975,9 @@ class DownloadEngine:
                     # GID was lost from aria2c (e.g. app restarted) -> re-register download
                     try:
                         if task.url.startswith("magnet:"):
-                            task.torrent_gid = await self.torrent_manager.add_magnet(task.url, save_dir=target_save_dir)
+                            task.torrent_gid = await self.torrent_manager.add_magnet(task.url, save_dir=target_save_dir, limit=task.speed_limit_kbps * 1024)
                         elif task.url.lower().endswith(".torrent") and os.path.exists(task.url):
-                            task.torrent_gid = await self.torrent_manager.add_torrent_file(task.url, save_dir=target_save_dir)
+                            task.torrent_gid = await self.torrent_manager.add_torrent_file(task.url, save_dir=target_save_dir, limit=task.speed_limit_kbps * 1024)
                         self.store.save(task)
                     except Exception:
                         pass
@@ -985,6 +988,9 @@ class DownloadEngine:
                 if followed_by and len(followed_by) > 0:
                     task.torrent_gid = followed_by[0]
                     self.store.save(task)
+                    if task.speed_limit_kbps:
+                        # The metadata download had the limit; the files' download is a new one in aria2
+                        await self.torrent_manager.set_download_limit(task.torrent_gid, task.speed_limit_kbps * 1024)
                     continue
 
                 state = status.get("status")  # active, waiting, paused, error, complete, removed
@@ -1160,6 +1166,37 @@ class DownloadEngine:
                     self._remove_path(p, allow_dir=task.is_torrent)
             self._notify("task_cancelled", task)
 
+    def limiter_for(self, task: DownloadTask) -> LimiterChain:
+        """What a download's transfers wait for: the global speed limit, then its own."""
+        own = self._task_limiters.get(task.id)
+        if own is None:
+            own = self._task_limiters[task.id] = RateLimiter(task.speed_limit_kbps * 1024)
+        return LimiterChain(self.rate_limiter, own)
+
+    async def set_task_speed_limit(self, task_id: str, kbps: int):
+        """This download's own limit in KB/s (0: none), kept across restarts and applied at once."""
+        task = self.tasks.get(task_id)
+        if not task:
+            return
+        task.speed_limit_kbps = max(0, int(kbps))
+        if task_id in self._task_limiters:
+            self._task_limiters[task_id].set_limit(task.speed_limit_kbps * 1024)
+        if task.is_torrent and task.torrent_gid and task.status == TaskStatus.DOWNLOADING:
+            try:
+                await self.torrent_manager.set_download_limit(task.torrent_gid, task.speed_limit_kbps * 1024)
+            except Exception as e:
+                print(f"[Engine] Torrent speed limit not applied: {e}")
+        self.store.save(task)
+        self._notify("task_updated", task)
+
+    async def set_global_speed_limit(self, kbps: int):
+        """The limit for everything together, torrents included (aria2 has its own limiter)."""
+        self.rate_limiter.set_limit(kbps * 1024)
+        try:
+            await self.torrent_manager.set_overall_limit(kbps * 1024)
+        except Exception as e:
+            print(f"[Engine] Torrent speed limit not applied: {e}")
+
     async def clear_completed(self) -> int:
         """Forgets every completed download; the downloaded files stay where they are."""
         done = [t.id for t in list(self.tasks.values()) if t.status == TaskStatus.COMPLETED]
@@ -1181,6 +1218,7 @@ class DownloadEngine:
         with self._lock:
             self.tasks.pop(task_id, None)
         self._running_loops.pop(task_id, None)
+        self._task_limiters.pop(task_id, None)
 
     @staticmethod
     def _remove_path(path: str, allow_dir: bool = False):

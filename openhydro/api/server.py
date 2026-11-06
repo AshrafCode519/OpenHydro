@@ -122,7 +122,7 @@ class AddTaskRequest(BaseModel):
 
 
 class SpeedLimitRequest(BaseModel):
-    max_kbps: int = 0  # 0 = unlimited
+    max_kbps: int = Field(default=0, ge=0, le=10_000_000)  # 0 = unlimited
 
 
 class RefreshUrlRequest(BaseModel):
@@ -358,6 +358,13 @@ def create_app(
     async def clear_completed_tasks():
         return {"removed": await engine.clear_completed()}
 
+    @app.post("/api/tasks/{task_id}/speed_limit")
+    async def set_task_speed_limit(task_id: str, req: SpeedLimitRequest):
+        if task_id not in engine.tasks:
+            raise HTTPException(status_code=404, detail="Task not found")
+        await engine.set_task_speed_limit(task_id, req.max_kbps)
+        return {"max_kbps": engine.tasks[task_id].speed_limit_kbps}
+
     @app.post("/api/tasks/{task_id}/refresh_url")
     async def refresh_url(task_id: str, req: RefreshUrlRequest):
         task = engine.tasks.get(task_id)
@@ -542,7 +549,7 @@ def create_app(
         engine.scheduler.set_auto_shutdown(False)
         return {"status": "cancelled" if ok else "failed"}
 
-    def apply_settings(changes: Dict[str, Any]) -> Dict[str, Any]:
+    async def apply_settings(changes: Dict[str, Any]) -> Dict[str, Any]:
         """Validates, saves and applies settings (all or none); a rejected value is an HTTP 400."""
         try:
             applied = engine.settings.update(changes)
@@ -554,7 +561,7 @@ def create_app(
         if "max_active_downloads" in applied:
             engine.scheduler.set_max_active(applied["max_active_downloads"])
         if "speed_limit_kbps" in applied:
-            engine.rate_limiter.set_limit(applied["speed_limit_kbps"] * 1024)
+            await engine.set_global_speed_limit(applied["speed_limit_kbps"])  # torrents included
         return applied
 
     def settings_view() -> Dict[str, Any]:
@@ -574,7 +581,7 @@ def create_app(
         start_with_windows = changes.pop("start_with_windows", None)
         if start_with_windows is not None and not isinstance(start_with_windows, bool):
             raise HTTPException(status_code=400, detail="التشغيل مع ويندوز يجب أن يكون true أو false")
-        apply_settings(changes)
+        await apply_settings(changes)
         if start_with_windows is not None:
             try:
                 autostart.set_enabled(start_with_windows)
@@ -587,7 +594,7 @@ def create_app(
 
     @app.post("/api/settings/limiter")
     async def set_limiter(req: SpeedLimitRequest):
-        apply_settings({"speed_limit_kbps": req.max_kbps})
+        await apply_settings({"speed_limit_kbps": req.max_kbps})
         return {"max_kbps": req.max_kbps}
 
     @app.get("/api/settings/limiter")
@@ -596,7 +603,7 @@ def create_app(
 
     @app.post("/api/settings/scheduler")
     async def set_scheduler(req: SchedulerRequest):
-        apply_settings({"max_active_downloads": req.max_active})
+        await apply_settings({"max_active_downloads": req.max_active})
         # The scheduled time and auto-shutdown are deliberately not kept across restarts
         engine.scheduler.set_schedule_start(req.scheduled_time)
         engine.scheduler.set_auto_shutdown(req.auto_shutdown)

@@ -95,6 +95,7 @@ class DownloadTask:
     torrent_gid: Optional[str] = None
     seeders: int = 0
     peers: int = 0
+    speed_limit_kbps: int = 0  # this download's own limit, on top of the global one (0: none)
     # What the download is doing before/besides transferring (e.g. preparing ffmpeg); shown, not saved
     phase: Optional[str] = None
 
@@ -162,5 +163,6 @@ class DownloadTask:
             "seeders": self.seeders,
             "peers": self.peers,
             "phase": self.phase,
+            "speed_limit_kbps": self.speed_limit_kbps,
             "chunks": [c.to_dict() for c in self.chunks],
         }

@@ -8,7 +8,7 @@ import threading
 from typing import Callable, Dict, Optional
 from urllib.parse import quote
 
-WIDTH, HEIGHT = 500, 380
+WIDTH, HEIGHT = 500, 440
 # Shown above the browser the download came from, then a normal window again
 ON_TOP_SECONDS = 2.0
 

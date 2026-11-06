@@ -176,6 +176,47 @@ class TestTaskList(DashboardTestCase):
         self.browser.wait_for(f"{ROWS}.length === 3", message="the deleted download stayed in the list")
         self.assertNoJsErrors()
 
+    CONFIRM = """({
+      shown: !document.getElementById('app-confirm-modal').classList.contains('hidden'),
+      title: document.getElementById('confirm-modal-title').innerText,
+      icon: document.querySelector('#confirm-modal-icon-bg svg').getAttribute('data-lucide'),
+      red: document.getElementById('confirm-modal-ok').className.includes('from-rose-500'),
+    })"""
+
+    def test_clear_completed(self):
+        self.browser.evaluate("document.querySelector('button[onclick=\"clearCompletedTasks()\"]').click()")
+        self.assertEqual(self.browser.evaluate(self.CONFIRM),
+                         {"shown": True, "title": "مسح المكتملة من القائمة", "icon": "list-x", "red": False})
+        self.browser.evaluate("document.getElementById('confirm-modal-ok').click()")
+        self.browser.wait_for(f"{ROWS}.length === 3", message="the completed download stayed in the list")
+        self.assertNotIn(TaskStatus.COMPLETED, [t.status for t in self.engine.tasks.values()])
+        self.assertNoJsErrors()
+
+    def test_removing_a_download_still_asks_in_red(self):
+        self.browser.evaluate(f"deleteTask({self.tasks['paused'].id!r})")
+        self.assertEqual(self.browser.evaluate(self.CONFIRM),
+                         {"shown": True, "title": "إزالة التنزيل", "icon": "trash-2", "red": True})
+
+    def test_same_link_twice_asks_first(self):
+        probe = {"filename": "Lecture 05 - Algorithms.mp4", "total_bytes": 2**20, "supports_ranges": True}
+        with mock.patch.object(self.engine, "probe_url", mock.AsyncMock(return_value=probe)), \
+                mock.patch.object(self.engine, "enqueue_or_start", mock.AsyncMock()):
+            url = self.tasks["paused"].url
+            self.browser.evaluate(f"openAddModal(); document.getElementById('modal-url-input').value = {url!r}; submitNewTask()")
+            self.assertEqual(self.browser.evaluate(self.CONFIRM),
+                             {"shown": True, "title": "الرابط ده موجود في القائمة", "icon": "copy", "red": False})
+            self.assertIn("متوقف مؤقتاً", self.browser.evaluate("document.getElementById('confirm-modal-msg').innerText"))
+
+            self.browser.evaluate("document.getElementById('confirm-modal-cancel').click()")
+            time.sleep(0.5)
+            self.assertEqual(len(self.engine.tasks), 4, "answering no adds nothing")
+
+            self.browser.evaluate("submitNewTask()")
+            self.browser.evaluate("document.getElementById('confirm-modal-ok').click()")
+            eventually(lambda: len(self.engine.tasks) == 5)
+        self.assertEqual(sum(t.url == url for t in self.engine.tasks.values()), 2)
+        self.assertNoJsErrors()
+
 
 class TestSettingsPage(DashboardTestCase):
     def test_changes_are_saved(self):

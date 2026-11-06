@@ -1160,6 +1160,13 @@ class DownloadEngine:
                     self._remove_path(p, allow_dir=task.is_torrent)
             self._notify("task_cancelled", task)
 
+    async def clear_completed(self) -> int:
+        """Forgets every completed download; the downloaded files stay where they are."""
+        done = [t.id for t in list(self.tasks.values()) if t.status == TaskStatus.COMPLETED]
+        for task_id in done:
+            await self.remove_task(task_id, delete_file=False)
+        return len(done)
+
     async def remove_task(self, task_id: str, delete_file: bool = False):
         """
         Stops a task and forgets it. Its stored record and temporary .part are always removed so it

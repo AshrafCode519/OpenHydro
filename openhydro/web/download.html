@@ -8,45 +8,78 @@
   <script src="/static/vendor/lucide-1.67.0.min.js"></script>
   <link rel="stylesheet" href="/static/css/style.css">
   <link rel="stylesheet" href="/static/css/tailwind.css">
+  <style>
+    body {
+      background: radial-gradient(circle at 50% 0%, #151d30 0%, #0b0f19 80%);
+      user-select: none;
+    }
+    .info-card {
+      background: rgba(15, 23, 42, 0.65);
+      border: 1px solid rgba(255, 255, 255, 0.07);
+      backdrop-filter: blur(8px);
+    }
+    .progress-track {
+      background: rgba(15, 23, 42, 0.85);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.4);
+    }
+    .progress-bar-glow {
+      box-shadow: 0 0 12px rgba(6, 182, 212, 0.5);
+    }
+  </style>
 </head>
 <!-- The progress window the desktop app opens when a download starts (IDM style); download.js fills it -->
-<body class="bg-[#0b0f19] text-gray-100 h-screen h-dvh overflow-hidden flex flex-col gap-3 p-4 text-sm">
-  <div class="flex items-start gap-3">
-    <div id="dw-icon" class="w-10 h-10 rounded-xl bg-slate-800 border border-white/5 flex items-center justify-center text-cyan-400 shrink-0">
+<body class="text-gray-100 h-screen h-dvh overflow-hidden flex flex-col justify-between p-3.5 text-xs">
+  <!-- Top File Header Card -->
+  <div class="info-card flex items-center gap-3 p-2.5 rounded-xl shadow-sm shrink-0">
+    <div id="dw-icon" class="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500/20 to-blue-600/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400 shrink-0 shadow-sm shadow-cyan-500/10">
       <i data-lucide="file" class="w-5 h-5"></i>
     </div>
     <div class="min-w-0 flex-1">
-      <h1 id="dw-name" dir="auto" class="font-semibold text-gray-100 truncate">...</h1>
-      <p id="dw-url" dir="ltr" class="text-[11px] text-gray-400 font-mono truncate text-right"></p>
+      <h1 id="dw-name" dir="auto" class="font-bold text-gray-100 text-sm truncate leading-snug">...</h1>
+      <p id="dw-url" dir="ltr" class="text-[10.5px] text-gray-400 font-mono truncate text-right opacity-80 mt-0.5"></p>
     </div>
   </div>
 
-  <section id="dw-progress" class="flex-1 min-h-0 flex flex-col gap-3">
-    <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs">
-      <dt class="text-gray-400">الحالة:</dt>
-      <dd id="dw-status" class="font-semibold text-cyan-400"></dd>
-      <dt class="text-gray-400">حجم الملف:</dt>
-      <dd id="dw-size" dir="ltr" class="font-mono text-gray-200 text-right"></dd>
-      <dt class="text-gray-400">تم تنزيله:</dt>
-      <dd id="dw-done" dir="ltr" class="font-mono text-gray-200 text-right"></dd>
-      <dt class="text-gray-400">السرعة:</dt>
-      <dd id="dw-speed" dir="ltr" class="font-mono text-gray-200 text-right"></dd>
-      <dt class="text-gray-400">الوقت المتبقي:</dt>
-      <dd id="dw-eta" dir="ltr" class="font-mono text-gray-200 text-right"></dd>
-      <dt class="text-gray-400">إمكانية الاستئناف:</dt>
-      <dd id="dw-resumable" class="text-gray-200"></dd>
-    </dl>
-    <div class="w-full h-3 rounded-full bg-slate-800 overflow-hidden">
-      <div id="dw-bar" class="h-full rounded-full bg-gradient-to-r from-cyan-500 to-blue-500 transition-all duration-300" style="width: 0%;"></div>
-    </div>
-    <div id="dw-segments" class="segment-container"></div>
-    <p id="dw-message" class="hidden text-xs text-rose-400 truncate"></p>
+  <!-- Download Progress Section -->
+  <section id="dw-progress" class="flex-1 min-h-0 flex flex-col justify-between py-2">
+    <!-- Stats Grid Card -->
+    <div class="info-card p-3 rounded-xl space-y-1.5">
+      <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-[11.5px]">
+        <dt class="text-gray-400">الحالة:</dt>
+        <dd id="dw-status" class="font-semibold text-cyan-400 truncate"></dd>
 
-    <!-- IDM's per-download options: a speed limit for this download, and what happens when it ends -->
-    <div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-xs text-gray-300">
-      <label class="flex items-center gap-2">
+        <dt class="text-gray-400">حجم الملف:</dt>
+        <dd id="dw-size" dir="ltr" class="font-mono text-gray-200 text-right"></dd>
+
+        <dt class="text-gray-400">تم تنزيله:</dt>
+        <dd id="dw-done" dir="ltr" class="font-mono text-cyan-300 font-medium text-right"></dd>
+
+        <dt class="text-gray-400">السرعة:</dt>
+        <dd id="dw-speed" dir="ltr" class="font-mono text-emerald-400 font-semibold text-right"></dd>
+
+        <dt class="text-gray-400">الوقت المتبقي:</dt>
+        <dd id="dw-eta" dir="ltr" class="font-mono text-gray-200 text-right"></dd>
+
+        <dt class="text-gray-400">إمكانية الاستئناف:</dt>
+        <dd id="dw-resumable" class="text-gray-200"></dd>
+      </dl>
+    </div>
+
+    <!-- Progress Bar with Glow -->
+    <div class="progress-track w-full h-3 rounded-full overflow-hidden p-0.5">
+      <div id="dw-bar" class="progress-bar-glow h-full rounded-full bg-gradient-to-r from-cyan-400 via-cyan-500 to-blue-600 transition-all duration-300" style="width: 0%;"></div>
+    </div>
+
+    <!-- Multi-thread Chunks Monitor -->
+    <div id="dw-segments" class="segment-container"></div>
+    <p id="dw-message" class="hidden text-xs text-rose-400 truncate bg-rose-500/10 border border-rose-500/20 p-2 rounded-lg"></p>
+
+    <!-- Speed Limit and Actions on Complete -->
+    <div class="flex items-center justify-between gap-2 px-1 text-[11px] text-gray-300">
+      <label class="flex items-center gap-1.5">
         <span class="text-gray-400">حد السرعة:</span>
-        <select id="dw-limit" dir="ltr" onchange="setDownloadLimit(this.value)" class="px-2 py-1 rounded-lg bg-slate-900 border border-white/10 text-xs text-gray-200 focus:outline-none focus:border-cyan-500">
+        <select id="dw-limit" dir="ltr" onchange="setDownloadLimit(this.value)" class="px-2 py-1 rounded-lg bg-slate-900/90 border border-white/10 text-[11px] text-gray-200 focus:outline-none focus:border-cyan-500 cursor-pointer">
           <option value="0">بدون تحديد</option>
           <option value="128">128 KB/s</option>
           <option value="512">512 KB/s</option>
@@ -57,28 +90,40 @@
         </select>
       </label>
       <div class="flex items-center gap-3">
-        <label class="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" id="dw-open-when-done" onchange="rememberChoices()" class="w-3.5 h-3.5 accent-cyan-500">افتح الملف بعد الانتهاء</label>
-        <label class="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" id="dw-close-when-done" onchange="rememberChoices()" class="w-3.5 h-3.5 accent-cyan-500">أغلق النافذة</label>
+        <label class="flex items-center gap-1.5 cursor-pointer hover:text-white transition-colors">
+          <input type="checkbox" id="dw-open-when-done" onchange="rememberChoices()" class="w-3.5 h-3.5 rounded accent-cyan-500 cursor-pointer">
+          <span>افتح الملف بعد الانتهاء</span>
+        </label>
+        <label class="flex items-center gap-1.5 cursor-pointer hover:text-white transition-colors">
+          <input type="checkbox" id="dw-close-when-done" onchange="rememberChoices()" class="w-3.5 h-3.5 rounded accent-cyan-500 cursor-pointer">
+          <span>أغلق النافذة</span>
+        </label>
       </div>
     </div>
   </section>
 
-  <section id="dw-complete" class="hidden flex-1 min-h-0 flex flex-col items-center justify-center gap-2 text-center">
-    <div class="w-12 h-12 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 flex items-center justify-center">
-      <i data-lucide="check" class="w-7 h-7"></i>
+  <!-- Complete View -->
+  <section id="dw-complete" class="hidden flex-1 min-h-0 flex flex-col items-center justify-center gap-2.5 text-center p-4">
+    <div class="w-14 h-14 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 flex items-center justify-center shadow-lg shadow-emerald-500/20">
+      <i data-lucide="check" class="w-8 h-8"></i>
     </div>
-    <p class="font-semibold text-emerald-400">اكتمل التنزيل</p>
-    <p id="dw-complete-size" dir="ltr" class="text-xs text-gray-400 font-mono"></p>
-    <p id="dw-path" dir="ltr" class="text-[11px] text-gray-500 truncate max-w-full"></p>
+    <div class="space-y-1">
+      <p class="font-bold text-base text-emerald-400">اكتمل التنزيل بنجاح</p>
+      <p id="dw-complete-size" dir="ltr" class="text-xs text-gray-300 font-mono"></p>
+    </div>
+    <div class="w-full max-w-sm px-3 py-1.5 rounded-lg bg-black/40 border border-white/5">
+      <p id="dw-path" dir="ltr" class="text-[10.5px] text-gray-400 truncate max-w-full font-mono"></p>
+    </div>
   </section>
 
-  <div class="flex items-center gap-2 pt-3 border-t border-white/10">
-    <button id="dw-pause" onclick="pauseDownload()" class="hidden px-4 py-2 rounded-xl glass-panel glass-panel-hover text-xs text-amber-400">إيقاف مؤقت</button>
-    <button id="dw-resume" onclick="resumeDownload()" class="hidden px-4 py-2 rounded-xl glass-panel glass-panel-hover text-xs text-emerald-400">استئناف</button>
-    <button id="dw-cancel" onclick="cancelDownload()" class="hidden px-4 py-2 rounded-xl glass-panel glass-panel-hover text-xs text-rose-400">إلغاء</button>
-    <button id="dw-open" onclick="openFile()" class="hidden px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white text-xs font-medium">فتح الملف</button>
-    <button id="dw-folder" onclick="openFolder()" class="hidden px-4 py-2 rounded-xl glass-panel glass-panel-hover text-xs text-cyan-400">فتح المجلد</button>
-    <button id="dw-close" onclick="closeWindow()" class="ms-auto px-4 py-2 rounded-xl text-xs text-gray-400 hover:text-white hover:bg-white/5">إخفاء</button>
+  <!-- Bottom Buttons -->
+  <div class="flex items-center gap-2 pt-2.5 border-t border-white/10 shrink-0">
+    <button id="dw-pause" onclick="pauseDownload()" class="hidden px-3.5 py-1.5 rounded-xl glass-panel glass-panel-hover text-xs font-medium text-amber-400 transition-all">إيقاف مؤقت</button>
+    <button id="dw-resume" onclick="resumeDownload()" class="hidden px-3.5 py-1.5 rounded-xl glass-panel glass-panel-hover text-xs font-medium text-emerald-400 transition-all">استئناف</button>
+    <button id="dw-cancel" onclick="cancelDownload()" class="hidden px-3.5 py-1.5 rounded-xl glass-panel glass-panel-hover text-xs font-medium text-rose-400 transition-all">إلغاء</button>
+    <button id="dw-open" onclick="openFile()" class="hidden px-4 py-1.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white text-xs font-semibold shadow-md shadow-cyan-500/25 transition-all">فتح الملف</button>
+    <button id="dw-folder" onclick="openFolder()" class="hidden px-3.5 py-1.5 rounded-xl glass-panel glass-panel-hover text-xs font-medium text-cyan-400 transition-all">فتح المجلد</button>
+    <button id="dw-close" onclick="closeWindow()" class="ms-auto px-3.5 py-1.5 rounded-xl text-xs text-gray-400 hover:text-white hover:bg-white/5 transition-all">إخفاء</button>
   </div>
 
   <script src="/static/js/format.js"></script>

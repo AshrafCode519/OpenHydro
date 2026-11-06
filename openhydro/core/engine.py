@@ -32,6 +32,9 @@ PROGRESS_EVENT_INTERVAL = 0.25
 # Seconds between saves of a running download's progress (its resume point) to the task store
 PROGRESS_SAVE_INTERVAL = 2.0
 
+# Shown while a video downloads without ffmpeg (only formats a site serves as one file can be used)
+FFMPEG_UNAVAILABLE_PHASE = "ffmpeg غير متاح: التنزيل بأفضل جودة لا تحتاج دمج"
+
 # Retrying these will not help (expired/forbidden link, missing file): give up after one more try
 PERMANENT_HTTP_ERRORS = {400, 401, 403, 404, 405, 410, 416, 451}
 PERMANENT_ERROR_RETRIES = 1
@@ -748,7 +751,10 @@ class DownloadEngine:
                     self._notify("task_completed", task)
                 else:
                     task.status = TaskStatus.ERROR
-                    task.error_message = "فشل تحميل الفيديو من المنصة"
+                    # e.g. YouTube without a JS runtime serves no format with sound in one file
+                    task.error_message = (
+                        "الفيديو ده محتاج ffmpeg ومقدرناش ننزّله: نزّله من الإعدادات (أو ثبّته على الجهاز) وحاول تاني"
+                        if task.phase == FFMPEG_UNAVAILABLE_PHASE else "فشل تحميل الفيديو من المنصة")
                     self._notify("task_error", task)
         except asyncio.CancelledError:
             # Keep CANCELLED (set by cancel_task); only an interrupted download becomes PAUSED
@@ -782,7 +788,7 @@ class DownloadEngine:
             task.phase = None
         except Exception as e:
             print(f"[Engine] ffmpeg unavailable: {e}")
-            task.phase = "ffmpeg غير متاح: التنزيل بأفضل جودة لا تحتاج دمج"
+            task.phase = FFMPEG_UNAVAILABLE_PHASE
         self._notify("task_updated", task)
 
     async def _execute_hls_download(self, task: DownloadTask):

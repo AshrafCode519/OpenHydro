@@ -1,5 +1,4 @@
 import re
-import asyncio
 import urllib.parse
 from typing import Dict, List, Optional, Tuple
 import httpx

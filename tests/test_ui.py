@@ -137,6 +137,22 @@ class TestDashboardPage(DashboardTestCase):
         self.assertEqual(self.browser.evaluate("getComputedStyle(document.getElementById('add-modal')).display"),
                          "flex")
 
+    REGISTRATIONS = "navigator.serviceWorker.getRegistrations().then(r => r.length)"
+
+    def test_no_service_worker(self):
+        time.sleep(0.5)  # the old page registered one on its load event
+        self.assertEqual(self.browser.evaluate(self.REGISTRATIONS), 0)
+
+    def test_an_old_service_worker_removes_itself_and_its_cache(self):
+        # As an earlier version left it in a browser: registered, with its cache-first copy of the files
+        self.browser.evaluate("""
+          caches.open('openhydro-v1.2.3').then(c => c.put('/static/css/style.css', new Response('old')))
+            .then(() => navigator.serviceWorker.register('/static/sw.js'))
+        """)
+        self.browser.wait_for(f"{self.REGISTRATIONS}.then(n => n === 0)", message="the old worker stayed registered")
+        self.assertEqual(self.browser.evaluate("caches.keys().then(k => k.length)"), 0)
+        self.assertNoJsErrors()
+
 
 class TestTaskList(DashboardTestCase):
     def test_progress_rebuilds_only_the_downloading_row(self):

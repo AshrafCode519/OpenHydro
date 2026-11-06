@@ -78,6 +78,62 @@ function render() {
   $('dw-open').classList.toggle('hidden', !done);
   $('dw-folder').classList.toggle('hidden', !done);
   $('dw-close').textContent = done ? 'إغلاق' : 'إخفاء';
+
+  // This download's own speed limit (left alone while the user is choosing one)
+  const limit = $('dw-limit');
+  if (document.activeElement !== limit) {
+    const value = String(task.speed_limit_kbps || 0);
+    if (![...limit.options].some(o => o.value === value)) {
+      limit.add(new Option(`${formatSpeed(task.speed_limit_kbps * 1024)}`, value));
+    }
+    limit.value = value;
+  }
+}
+
+// It finished while this window was open (not: the window was opened on a finished download)
+function onFinished() {
+  const openIt = $('dw-open-when-done').checked;
+  const closeIt = $('dw-close-when-done').checked;
+  if (openIt) call('open_file', closeIt);
+  else if (closeIt) setTimeout(closeWindow, 1000);
+}
+
+async function setDownloadLimit(kbps) {
+  try {
+    const res = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/speed_limit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ max_kbps: parseInt(kbps, 10) }),
+    });
+    if (!res.ok) throw new Error((await res.json()).detail || 'HTTP ' + res.status);
+  } catch (e) {
+    const message = $('dw-message');
+    message.textContent = 'تعذر تغيير حد السرعة: ' + e.message;
+    message.classList.remove('hidden');
+  }
+}
+
+// The two "when it finishes" choices carry over to the next download's window
+const CHOICES_KEY = 'openhydro.downloadWindow.whenDone';
+
+function rememberChoices() {
+  try {
+    localStorage.setItem(CHOICES_KEY, JSON.stringify({
+      open: $('dw-open-when-done').checked, close: $('dw-close-when-done').checked,
+    }));
+  } catch (e) {
+    // Storage unavailable: the choices only last for this window
+  }
+}
+
+function restoreChoices() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(CHOICES_KEY) || '{}');
+    $('dw-open-when-done').checked = !!saved.open;
+    $('dw-close-when-done').checked = !!saved.close;
+  } catch (e) {
+    // Nothing saved, or storage unavailable
+  }
 }
 
 function showGone() {
@@ -104,8 +160,10 @@ function connect() {
       if (type === 'task_cancelled') {
         showGone();
       } else if (type.startsWith('task_')) {
+        const finishedNow = task && task.status !== 'completed' && data.status === 'completed';
         task = data;
         render();
+        if (finishedNow) onFinished();
       }
     }
   };
@@ -151,4 +209,5 @@ window.addEventListener('pywebviewready', () => {
 });
 
 lucide.createIcons();
+restoreChoices();
 connect();

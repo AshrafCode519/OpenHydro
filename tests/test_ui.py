@@ -363,15 +363,77 @@ class TestDownloadWindowPage(DashboardTestCase):
 
     def setUp(self):
         super().setUp()
-        self.browser.send("Emulation.setDeviceMetricsOverride", width=484, height=341, deviceScaleFactor=1,
+        # The 500x440 window without its frame and title bar
+        self.browser.send("Emulation.setDeviceMetricsOverride", width=484, height=401, deviceScaleFactor=1,
                           mobile=False)
         self.addCleanup(self.browser.send, "Emulation.clearDeviceMetricsOverride")
 
-    def open_window(self, task):
+    def open_window(self, task, keep_choices=False):
         self.browser.open(f"{self.server.url}static/download.html?task={task.id}")
         self.browser.evaluate(NO_ANIMATIONS)
         self.browser.wait_for(f"document.getElementById('dw-name').textContent === {task.filename!r}",
                               message="the download was not shown")
+        if not keep_choices:  # what an earlier test chose "when it finishes" is remembered in the browser
+            self.browser.evaluate("localStorage.clear(); for (const id of ['dw-open-when-done', 'dw-close-when-done'])"
+                                  " document.getElementById(id).checked = false")
+
+    def opening_files(self):
+        """The file the window opens is created, and nothing really opens on the desktop."""
+        with open(self.tasks["downloading"].save_path, "wb") as f:
+            f.write(b"done")
+        opened = mock.Mock()
+        for target in ("os.startfile", "subprocess.Popen"):
+            patcher = mock.patch(target, opened, create=True)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        return opened
+
+    def test_speed_limit_for_this_download(self):
+        task = self.tasks["downloading"]
+        self.open_window(task)
+        self.assertEqual(self.browser.evaluate("document.getElementById('dw-limit').value"), "0")
+        self.browser.evaluate("const s = document.getElementById('dw-limit'); s.value = '512';"
+                              " s.dispatchEvent(new Event('change'))")
+        eventually(lambda: task.speed_limit_kbps == 512)
+
+        # A limit set elsewhere, not one of the choices, is still shown
+        self.engine.submit(self.engine.set_task_speed_limit(task.id, 300)).result(timeout=5)
+        self.browser.wait_for("document.getElementById('dw-limit').value === '300'")
+        self.assertEqual(self.browser.evaluate(
+            "document.getElementById('dw-limit').selectedOptions[0].textContent"), "300.0 KB/s")
+        self.assertNoJsErrors()
+
+    def test_when_it_finishes_open_the_file_and_close(self):
+        opened = self.opening_files()
+        task = self.tasks["downloading"]
+        self.open_window(task)
+        self.browser.evaluate("""
+          window.__closed = false;
+          closeWindow = () => { window.__closed = true; };
+          document.getElementById('dw-open-when-done').click();
+          document.getElementById('dw-close-when-done').click();
+        """)
+        task.status = TaskStatus.COMPLETED
+        self.engine._notify("task_completed", task)
+        self.browser.wait_for("window.__closed", message="the window did not close")
+        opened.assert_called_once()
+
+        # The choices are remembered for the next download's window
+        self.open_window(self.tasks["paused"], keep_choices=True)
+        self.assertEqual(self.browser.evaluate(
+            "[document.getElementById('dw-open-when-done').checked, document.getElementById('dw-close-when-done').checked]"),
+            [True, True])
+        self.assertNoJsErrors()
+
+    def test_nothing_happens_for_a_download_already_finished(self):
+        opened = self.opening_files()
+        self.open_window(self.tasks["paused"])
+        self.browser.evaluate("document.getElementById('dw-open-when-done').click()")  # remembered
+        task = self.tasks["downloading"]
+        task.status = TaskStatus.COMPLETED
+        self.open_window(task, keep_choices=True)  # opened on a download that is already complete
+        time.sleep(0.5)
+        opened.assert_not_called()
 
     def text(self, element_id):
         return self.browser.evaluate(f"document.getElementById('{element_id}').textContent.trim()")

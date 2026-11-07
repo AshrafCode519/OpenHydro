@@ -16,7 +16,6 @@ from starlette.testclient import TestClient
 from browser import Browser, find_browser
 from helpers import make_engine
 from openhydro.api import create_app
-from openhydro.core.engine import WebPageError
 
 BROWSER = find_browser()
 EXTENSION = os.path.join(os.path.dirname(__file__), "..", "openhydro", "extension")

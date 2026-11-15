@@ -232,7 +232,10 @@ class DashboardServer:
         self.port = free_port()
         self.url = f"http://127.0.0.1:{self.port}/"
         app = create_app(engine, remote_token="ui-test", listening_on_network=False, **app_options)
-        self.server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=self.port, log_level="warning"))
+        # The WebSocket implementation the app itself runs (run.py), not uvicorn's default
+        from openhydro.api import websocket_implementation
+        self.server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=self.port, log_level="warning",
+                                                    ws=websocket_implementation()))
         self.thread = threading.Thread(target=self.server.run, daemon=True)
         self.thread.start()
         deadline = time.monotonic() + 15

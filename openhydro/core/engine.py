@@ -21,7 +21,7 @@ from .limiter import RateLimiter, LimiterChain
 from .worker import ChunkWorker, DEFAULT_USER_AGENT, MAX_RETRIES, RETRY_BACKOFF_BASE, shared_ssl_context, shared_ssl_context_async
 from .hls import HLSStreamParser, HLSDownloader
 from .scheduler import SmartScheduler
-from .extractor import VideoExtractor
+from .extractor import VideoExtractor, VideoDownloadError
 from .torrent import TorrentManager
 from .security import sanitize_filename, get_app_data_dir
 from .settings import AppSettings
@@ -34,6 +34,9 @@ PROGRESS_SAVE_INTERVAL = 2.0
 
 # Shown while a video downloads without ffmpeg (only formats a site serves as one file can be used)
 FFMPEG_UNAVAILABLE_PHASE = "ffmpeg غير متاح: التنزيل بأفضل جودة لا تحتاج دمج"
+
+# After a video download loses its connection: seconds before each new try (yt-dlp resumes its .part)
+VIDEO_RETRY_DELAYS = (5, 15, 30, 60)
 
 # Link endings that are still web pages, not files (a page there may hold a video)
 WEB_PAGE_EXTENSIONS = {"html", "htm", "php", "asp", "aspx", "jsp", "cfm", "shtml", "xhtml"}
@@ -758,7 +761,7 @@ class DownloadEngine:
             fmt = task.selected_format or "bestvideo+bestaudio/best"
             if VideoExtractor.needs_ffmpeg(fmt) and not HLSDownloader.find_ffmpeg():
                 await self._prepare_ffmpeg(task)
-            final_path = await VideoExtractor.download(
+            final_path = await self._download_video_with_retries(task, dict(
                 rate_limiter=self.limiter_for(task),
                 url=task.url,
                 output_path=task.save_path,
@@ -767,7 +770,7 @@ class DownloadEngine:
                 on_progress=on_progress,
                 is_cancelled=lambda: task.status != TaskStatus.DOWNLOADING,
                 http_headers=http_headers,
-            )
+            ))
 
             if task.status == TaskStatus.DOWNLOADING:
                 if final_path:
@@ -797,6 +800,11 @@ class DownloadEngine:
             if task.status == TaskStatus.DOWNLOADING:
                 task.status = TaskStatus.PAUSED
             self._notify("task_updated", task)
+        except VideoDownloadError as e:
+            if task.status == TaskStatus.DOWNLOADING:  # a pause or cancel meanwhile stays what it is
+                task.status = TaskStatus.ERROR
+                task.error_message = e.message
+                self._notify("task_error", task)
         except Exception as e:
             print(f"[Engine] VideoExtractor error: {e}")
             task.status = TaskStatus.ERROR
@@ -805,6 +813,31 @@ class DownloadEngine:
         finally:
             task.phase = None
             self.store.save(task)
+
+    async def _download_video_with_retries(self, task: DownloadTask, options: Dict) -> Optional[str]:
+        """
+        yt-dlp gives up on a connection after its own retries (minutes without data); a long video then
+        failed for good. A network failure is tried again here a few times, later each time, and yt-dlp
+        carries on from the part already downloaded. Pausing during the wait stops it.
+        """
+        for attempt in range(len(VIDEO_RETRY_DELAYS) + 1):
+            try:
+                return await VideoExtractor.download(**options)
+            except VideoDownloadError as e:
+                if task.status != TaskStatus.DOWNLOADING:
+                    return None  # paused or cancelled meanwhile: not a failure
+                if not e.transient or attempt == len(VIDEO_RETRY_DELAYS):
+                    raise
+                delay = VIDEO_RETRY_DELAYS[attempt]
+                print(f"[Engine] Video connection lost ({e}); trying again in {delay} s")
+                task.phase = f"انقطع الاتصال بالسيرفر: محاولة جديدة بعد {delay} ثانية ({attempt + 1} من {len(VIDEO_RETRY_DELAYS)})"
+                task.speed = 0.0
+                self._notify("task_updated", task)
+                await asyncio.sleep(delay)
+                if task.status != TaskStatus.DOWNLOADING:
+                    return None
+                task.phase = None
+                self._notify("task_updated", task)
 
     async def _prepare_ffmpeg(self, task: DownloadTask):
         """

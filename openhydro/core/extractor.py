@@ -36,6 +36,45 @@ SUBTITLE_EXTS = ("srt", "vtt", "ass")
 # enable every runtime it supports so an installed Node.js or Bun is used too
 JS_RUNTIMES = {"deno": {}, "node": {}, "bun": {}}
 
+# yt-dlp waits longer before each of its own retries (1, 2, 4... 30 s), riding out a short outage
+RETRY_SLEEP = {"http": lambda n: min(2 ** n, 30), "fragment": lambda n: min(2 ** n, 30)}
+
+# What yt-dlp reports when the connection, not the video, is the problem: worth another try later
+TRANSIENT_ERRORS = (
+    "timed out", "timeout", "connection reset", "connection aborted", "connection refused",
+    "remote end closed", "incompleteread", "incomplete read", "temporary failure", "getaddrinfo",
+    "name resolution", "network is unreachable", "no route to host", "eof occurred", "broken pipe",
+    "max retries exceeded", "http error 500", "http error 502", "http error 503", "http error 504",
+    "winerror 10054", "winerror 10060", "winerror 10065",
+)
+
+# The reasons a user can act on, in their words (checked in order; the first match wins)
+FAILURE_MESSAGES = (
+    (("sign in to confirm", "not a bot"), "يوتيوب طلب التأكد إنك مش برنامج آلي. استنى شوية وجرّب تاني."),
+    (("private video", "video is private", "video unavailable", "has been removed", "no longer available",
+      "account associated with this video has been terminated"), "الفيديو ده مش متاح: اتمسح أو بقى خاص."),
+    (("requested format is not available",), "الجودة اللي اخترتها مش متاحة للفيديو ده. جرّب جودة تانية."),
+    (("http error 403", "forbidden"), "السيرفر رفض التنزيل (403). جرّب تاني بعد شوية."),
+    (("http error 404",), "الفيديو مش موجود على السيرفر (404)."),
+)
+
+
+class VideoDownloadError(Exception):
+    """yt-dlp could not download the video: `message` is for the user; `transient` means try again later."""
+
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        text = reason.lower()
+        self.transient = any(marker in text for marker in TRANSIENT_ERRORS)
+        known = next((msg for markers, msg in FAILURE_MESSAGES if any(m in text for m in markers)), None)
+        if known:
+            self.message = known
+        elif self.transient:
+            self.message = "انقطع الاتصال بسيرفر الفيديو أكتر من مرة. اضغط استئناف وهيكمل من مكانه."
+        else:
+            # Unknown: the start of yt-dlp's own reason, which is still better than "failed"
+            self.message = "فشل تحميل الفيديو: " + reason.replace("ERROR: ", "").strip()[:160]
+
 
 class VideoExtractor:
     @staticmethod
@@ -550,6 +589,7 @@ class VideoExtractor:
             "http_chunk_size": 10 * 1024 * 1024,
             "retries": 10,
             "fragment_retries": 10,
+            "retry_sleep_functions": RETRY_SLEEP,
             "quiet": True,
             "js_runtimes": JS_RUNTIMES,
             "no_warnings": True,
@@ -612,4 +652,5 @@ class VideoExtractor:
             return cls._locate_output(out_base, expected_exts)
         except Exception as e:
             print(f"[VideoExtractor] Download failed ({format_selector}): {e}")
-            return None
+            # The engine tries again after a network failure (the .part is kept), and shows the reason
+            raise VideoDownloadError(str(e)) from e

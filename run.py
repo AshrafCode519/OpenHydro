@@ -13,12 +13,87 @@ import threading
 import argparse
 import webbrowser
 
+LOG_MAX_BYTES = 2 * 1024 * 1024  # then the log starts over, keeping the previous one as openhydro.log.1
+
+
+class TimestampedLog:
+    """openhydro.log: each line starts with when it was written (it had no times, so no order of events)."""
+
+    def __init__(self, stream):
+        self._stream = stream
+        self._line_start = True
+        self._lock = threading.Lock()
+
+    def write(self, text):
+        with self._lock:
+            out = []
+            for piece in text.splitlines(keepends=True):
+                if self._line_start:
+                    out.append(time.strftime("[%Y-%m-%d %H:%M:%S] "))
+                out.append(piece)
+                self._line_start = piece.endswith(("\n", "\r"))
+            self._stream.write("".join(out))
+        return len(text)
+
+    def flush(self):
+        self._stream.flush()
+
+    def isatty(self):
+        return False
+
+    def writable(self):
+        return True
+
+    @property
+    def encoding(self):
+        return self._stream.encoding
+
+
+LOG_DIR = os.path.join(os.environ.get("LOCALAPPDATA", os.environ.get("TEMP", ".")), "OpenHydro")
+
+
+def open_log(log_dir: str) -> TimestampedLog:
+    os.makedirs(log_dir, exist_ok=True)
+    log_path = os.path.join(log_dir, "openhydro.log")
+    # It was only ever appended to: start over past a size, keeping one previous file
+    if os.path.exists(log_path) and os.path.getsize(log_path) > LOG_MAX_BYTES:
+        os.replace(log_path, log_path + ".1")
+    return TimestampedLog(open(log_path, "a", encoding="utf-8", buffering=1))
+
+
+def remove_leftover_profiles(log_dir: str, temp_dir: str = None) -> int:
+    """
+    Up to 1.3.2 the window used a private WebView2 profile that pywebview creates in TEMP and often fails
+    to delete on exit (5-10 MB each time), writing "Failed to delete user data folder: ...'<TEMP>\\tmpXXXX\\
+    EBWebView\\...'" to this log. Those folders, and only those (certainly OpenHydro's), are removed.
+    """
+    import re
+    import shutil
+    import tempfile
+    temp_dir = os.path.normcase(os.path.abspath(temp_dir or tempfile.gettempdir()))
+    removed = 0
+    for name in ("openhydro.log", "openhydro.log.1"):
+        try:
+            with open(os.path.join(log_dir, name), encoding="utf-8", errors="replace") as f:
+                text = f.read()
+        except OSError:
+            continue
+        for quoted in re.findall(r"Failed to delete user data folder: .*?'([^']+)'", text):
+            head, found, _ = quoted.replace("\\\\", "\\").partition("\\EBWebView")
+            folder = os.path.abspath(head)
+            if (not found or os.path.normcase(os.path.dirname(folder)) != temp_dir
+                    or not os.path.basename(folder).lower().startswith("tmp")
+                    or not os.path.isdir(os.path.join(folder, "EBWebView"))):
+                continue
+            shutil.rmtree(folder, ignore_errors=True)
+            removed += not os.path.exists(folder)
+    return removed
+
+
 # Ensure robust file logging if running in windowless mode (console=False)
 if sys.stdout is None or sys.stderr is None:
     try:
-        log_dir = os.path.join(os.environ.get("LOCALAPPDATA", os.environ.get("TEMP", ".")), "OpenHydro")
-        os.makedirs(log_dir, exist_ok=True)
-        log_fp = open(os.path.join(log_dir, "openhydro.log"), "a", encoding="utf-8", buffering=1)
+        log_fp = open_log(LOG_DIR)
         if sys.stdout is None:
             sys.stdout = log_fp
         if sys.stderr is None:
@@ -51,7 +126,8 @@ from openhydro.core import ytdlp_updater
 from openhydro.core.instance import InstanceLock, ask_running_instance_to_show
 from openhydro.core.clipboard import ClipboardWatcher
 from openhydro.core.download_windows import DownloadWindows
-from openhydro.api import create_app
+from openhydro.core.security import get_app_data_dir
+from openhydro.api import create_app, websocket_implementation
 
 # OPENHYDRO_PORT only exists for development/testing next to an installed copy
 PORT = int(os.environ.get("OPENHYDRO_PORT", "8765"))
@@ -101,7 +177,7 @@ def start_server(engine: DownloadEngine, bind_host: str, on_show_window=None, cl
             log_level="warning",
             access_log=False,
             http="h11",
-            ws="websockets",
+            ws=websocket_implementation(),
         )
         server = uvicorn.Server(config)
         loop.run_until_complete(server.serve())
@@ -227,6 +303,8 @@ def main():
 
     # Loads yt-dlp in the background (faster first video probe) and fetches a newer one daily
     ytdlp_updater.start_background(openhydro.__version__)
+    # WebView2 profiles earlier versions left in TEMP (they are named in this log)
+    threading.Thread(target=remove_leftover_profiles, args=(LOG_DIR,), daemon=True).start()
     clipboard.start()
 
     def wait_until_interrupted():
@@ -281,7 +359,12 @@ def main():
 
             w.events.closing += on_closing
 
-            webview.start(gui_running.set)
+            # A lasting profile in OpenHydro's folder, not a private one: pywebview creates that in TEMP and
+            # often fails to delete it on exit (WebView2 still holds it), leaving 5-10 MB behind each time;
+            # it also keeps what the pages remember (the download window's "when it finishes" choices).
+            # The pages are served with no-cache, so a lasting cache never shows an old version.
+            webview.start(gui_running.set, private_mode=False,
+                          storage_path=os.path.join(get_app_data_dir(), "webview"))
             cleanup(engine, tray)
         except Exception as e:
             if hidden:

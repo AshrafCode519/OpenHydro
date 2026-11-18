@@ -133,9 +133,9 @@ jobs:
   build-linux:
     name: Build Linux Portable Package
     runs-on: ubuntu-24.04
-    # A stuck package mirror once held this job (and so any release waiting on it) for hours: the
-    # default limit is 6 hours. Fail instead, so it can be run again at once.
-    timeout-minutes: 40
+    # The default limit is 6 hours, which a stuck package mirror would also impose on any release
+    # waiting on this job. Fail instead, so it can be run again.
+    timeout-minutes: 75
     steps:
       - name: Checkout Code
         uses: actions/checkout@v5
@@ -147,7 +147,8 @@ jobs:
           cache: 'pip'
 
       - name: Install System Dependencies
-        timeout-minutes: 15  # usually under a minute
+        # Usually under a minute, but a slow mirror took 40 (2026-11-18): only a real hang should fail it
+        timeout-minutes: 55
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |

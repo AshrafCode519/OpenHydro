@@ -22,10 +22,35 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   }
 });
 
-// Handle messages from content script (floating grab button & qualities probe)
+// The site's cookies, shared with OpenHydro before a link from it is sent: a video that needs the user
+// signed in (private, age-restricted, members only) then downloads with the account it plays with here.
+// OpenHydro keeps them in memory and uses them only if the video does not download without them.
+async function shareCookies(...urls) {
+  const pages = [...new Set(urls.filter((u) => /^https?:\/\//i.test(u || "")))];
+  for (const url of pages) {
+    try {
+      const cookies = (await chrome.cookies.getAll({ url })).map((c) => ({
+        name: c.name, value: c.value, domain: c.domain, path: c.path, secure: c.secure,
+        hostOnly: c.hostOnly, expirationDate: c.expirationDate,
+      }));
+      // Sent even when there are none: signed out here means signed out in OpenHydro too
+      await fetch(`${OPENHYDRO_BASE}/api/browser/cookies`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url, cookies }),
+      });
+    } catch (e) {
+      // no cookie access, or OpenHydro is not running: the link itself still goes
+    }
+  }
+}
+
+// Handle messages from content script (floating grab button & qualities probe) and the popup
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === "probe_url") {
-    fetch(`http://127.0.0.1:8765/api/probe?url=${encodeURIComponent(request.url)}`)
+    // The video's address, the page (or frame) it plays in, and the tab's page
+    shareCookies(request.url, sender.url, sender.tab && sender.tab.url)
+      .then(() => fetch(`${OPENHYDRO_BASE}/api/probe?url=${encodeURIComponent(request.url)}`))
       .then((res) => {
         if (!res.ok) throw new Error("HTTP " + res.status);
         return res.json();
@@ -44,10 +69,24 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       .catch(() => sendResponse({ success: false, notRunning: true }));
     return true; // Keep message channel open for async response
   }
+
+  // The popup's Send button: OpenHydro's add dialog with the link (it closes right after asking)
+  if (request.action === "open_add_dialog") {
+    shareCookies(request.url, request.page)
+      .then(() => fetch(`${OPENHYDRO_BASE}/api/app/add_dialog`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: request.url }),
+      }))
+      .then((res) => sendResponse({ success: res.ok }))
+      .catch(() => sendResponse({ success: false, notRunning: true }));
+    return true;
+  }
 });
 
 // Send download task to local OpenHydro engine
 async function sendToOpenHydro(url, referrer, format_id) {
+  await shareCookies(url, referrer);
   try {
     const response = await fetch(OPENHYDRO_API, {
       method: "POST",

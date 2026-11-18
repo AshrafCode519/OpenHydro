@@ -240,11 +240,13 @@ class TestSettingsPage(DashboardTestCase):
         self.browser.wait_for("document.getElementById('set-download-dir').placeholder !== ''")
         self.browser.evaluate("""
           document.getElementById('set-notify').click();
+          document.getElementById('set-browser-cookies').click();
           document.getElementById('set-default-connections').value = '16';
           document.querySelector('#settings-modal button[onclick="saveSettings()"]').click();
         """)
         eventually(lambda: self.engine.settings.get("default_connections") == 16)
         self.assertFalse(self.engine.settings.get("notify_on_complete"))
+        self.assertFalse(self.engine.settings.get("use_browser_cookies"))
         self.browser.wait_for("document.getElementById('settings-modal').classList.contains('hidden')")
         # New downloads start with the saved default
         self.browser.evaluate("openAddModal()")

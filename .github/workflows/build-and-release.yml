@@ -19,6 +19,7 @@ jobs:
   build-windows:
     name: Build Windows (Installer & Portable)
     runs-on: windows-latest
+    timeout-minutes: 45  # usually 5; the default limit is 6 hours
     steps:
       - name: Checkout Code
         uses: actions/checkout@v5
@@ -132,6 +133,9 @@ jobs:
   build-linux:
     name: Build Linux Portable Package
     runs-on: ubuntu-24.04
+    # A stuck package mirror once held this job (and so any release waiting on it) for hours: the
+    # default limit is 6 hours. Fail instead, so it can be run again at once.
+    timeout-minutes: 40
     steps:
       - name: Checkout Code
         uses: actions/checkout@v5
@@ -143,9 +147,16 @@ jobs:
           cache: 'pip'
 
       - name: Install System Dependencies
+        timeout-minutes: 15  # usually under a minute
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg libwebkit2gtk-4.1-dev libgtk-3-dev || sudo apt-get install -y ffmpeg libwebkit2gtk-4.0-dev || true
+          # A slow or stuck mirror is retried, then given up on, instead of hanging the job
+          APT_OPTS="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
+          # Rebuilding the man page index after the install takes minutes and nothing here reads it
+          sudo rm -f /var/lib/man-db/auto-update
+          sudo apt-get $APT_OPTS update
+          sudo apt-get $APT_OPTS install -y ffmpeg libwebkit2gtk-4.1-dev libgtk-3-dev || sudo apt-get $APT_OPTS install -y ffmpeg libwebkit2gtk-4.0-dev || true
 
       - name: Install Python Dependencies
         run: |

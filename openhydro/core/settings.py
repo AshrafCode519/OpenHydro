@@ -19,6 +19,7 @@ DEFAULTS: Dict[str, Any] = {
     "notify_on_complete": True,
     "show_download_window": True,  # IDM-style progress window for downloads started on this PC
     "clipboard_monitor": True,     # offer download links copied anywhere (never downloads without a click)
+    "use_browser_cookies": True,   # a video that needs signing in uses the cookies the browser extension shares
     "remote_access": False,        # phone/LAN control; off = the server only listens on this PC
 }
 
@@ -63,6 +64,7 @@ VALIDATORS = {
     "notify_on_complete": lambda v: _flag(v, "إشعار الاكتمال"),
     "show_download_window": lambda v: _flag(v, "نافذة التنزيل"),
     "clipboard_monitor": lambda v: _flag(v, "مراقبة الحافظة"),
+    "use_browser_cookies": lambda v: _flag(v, "كوكيز المتصفح"),
     "remote_access": lambda v: _flag(v, "التحكم عن بعد"),
 }
 

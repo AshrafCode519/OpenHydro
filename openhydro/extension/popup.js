@@ -1,6 +1,7 @@
 const OPENHYDRO_API = "http://127.0.0.1:8765/api/system";
-// Opens OpenHydro's add dialog with the link: it shows what the link is (video qualities, file size)
-const ADD_DIALOG_API = "http://127.0.0.1:8765/api/app/add_dialog";
+
+// The page open in this tab (its cookies go with a link from it: see shareCookies in background.js)
+let activePage = null;
 
 async function checkStatus() {
   const dot = document.getElementById("status-dot");
@@ -31,15 +32,17 @@ document.getElementById("send-btn").addEventListener("click", async () => {
     return;
   }
 
+  // Opens OpenHydro's add dialog with the link: it shows what the link is (video qualities, file size).
+  // Through background.js, which shares the site's cookies first.
+  let res = null;
   try {
-    const res = await fetch(ADD_DIALOG_API, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: url })
-    });
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    window.close();  // the choice (quality, name) is made in OpenHydro's window
+    res = await chrome.runtime.sendMessage({ action: "open_add_dialog", url, page: activePage });
   } catch (e) {
+    // the background worker could not be reached
+  }
+  if (res && res.success) {
+    window.close();  // the choice (quality, name) is made in OpenHydro's window
+  } else {
     alert("تعذر الاتصال بالتطبيق");
   }
 });
@@ -56,6 +59,7 @@ captureToggle.addEventListener("change", () => {
 // Auto grab active tab URL
 chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
   if (tabs && tabs[0] && tabs[0].url && tabs[0].url.startsWith("http")) {
+    activePage = tabs[0].url;
     document.getElementById("link-input").value = tabs[0].url;
   }
 });

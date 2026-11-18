@@ -1135,6 +1135,7 @@ async function openSettingsModal() {
     document.getElementById('set-notify').checked = s.notify_on_complete;
     document.getElementById('set-download-window').checked = s.show_download_window;
     document.getElementById('set-clipboard').checked = s.clipboard_monitor;
+    document.getElementById('set-browser-cookies').checked = s.use_browser_cookies;
     document.getElementById('set-remote').checked = s.remote_access;
     // null: only the installed app can register itself to start with Windows
     const autostart = document.getElementById('set-autostart');
@@ -1160,6 +1161,7 @@ async function saveSettings() {
     notify_on_complete: document.getElementById('set-notify').checked,
     show_download_window: document.getElementById('set-download-window').checked,
     clipboard_monitor: document.getElementById('set-clipboard').checked,
+    use_browser_cookies: document.getElementById('set-browser-cookies').checked,
     remote_access: document.getElementById('set-remote').checked,
   };
   if (!autostart.disabled) changes.start_with_windows = autostart.checked;

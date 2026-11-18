@@ -22,6 +22,7 @@ from starlette.requests import cookie_parser
 from starlette.websockets import WebSocketClose
 
 from openhydro.core import DownloadEngine, TaskStatus, StorageManager, autostart, ffmpeg_component
+from openhydro.core.browser_cookies import MAX_COOKIES_PER_SHARE, browser_cookies
 from openhydro.core.security import load_or_create_secret, is_within_directory
 from openhydro.core.settings import SettingsError
 from openhydro.core.engine import WebPageError
@@ -124,6 +125,22 @@ class AddTaskRequest(BaseModel):
 
 class AddDialogRequest(BaseModel):
     url: str = Field(min_length=1, max_length=8192)
+
+
+class BrowserCookie(BaseModel):
+    """One cookie as chrome.cookies.getAll gives it (its other fields are ignored)."""
+    name: str = Field(min_length=1, max_length=4096)
+    value: str = Field(max_length=8192)
+    domain: str = Field(min_length=1, max_length=255)
+    path: str = Field(default="/", max_length=4096)
+    secure: bool = False
+    hostOnly: Optional[bool] = None
+    expirationDate: Optional[float] = None  # none: a session cookie
+
+
+class BrowserCookiesRequest(BaseModel):
+    url: str = Field(min_length=1, max_length=8192)
+    cookies: List[BrowserCookie] = Field(default_factory=list, max_length=MAX_COOKIES_PER_SHARE)
 
 
 class SpeedLimitRequest(BaseModel):
@@ -576,6 +593,8 @@ def create_app(
             engine.scheduler.set_max_active(applied["max_active_downloads"])
         if "speed_limit_kbps" in applied:
             await engine.set_global_speed_limit(applied["speed_limit_kbps"])  # torrents included
+        if applied.get("use_browser_cookies") is False:
+            browser_cookies.clear()  # turned off: nothing the browser shared stays in memory
         return applied
 
     def settings_view() -> Dict[str, Any]:
@@ -739,6 +758,18 @@ def create_app(
         if on_show_window:
             await asyncio.to_thread(on_show_window)
         return {"status": "shown"}
+
+    # The browser extension shares a site's cookies before it sends a link from it: a video that needs the
+    # user signed in then downloads like it plays in the browser (they are used only if it fails without).
+    # Write only (nothing reads them back), from this PC only, kept in memory until the app closes.
+    @app.post("/api/browser/cookies")
+    async def share_browser_cookies(req: BrowserCookiesRequest, request: Request):
+        if not (request.client and request.client.host in LOOPBACK_HOSTS):
+            raise HTTPException(status_code=403, detail="This PC only")
+        if not engine.settings.get("use_browser_cookies"):
+            return {"kept": 0, "enabled": False}
+        kept = browser_cookies.remember(req.url, [c.model_dump() for c in req.cookies])
+        return {"kept": kept, "enabled": True}
 
     @app.get("/api/app/add_dialog")
     async def get_add_dialog():

@@ -10,9 +10,10 @@ import glob
 import time
 import asyncio
 import threading
-from typing import Dict, List, Optional, Callable
+from typing import Any, Dict, List, Optional, Callable, Tuple
 from urllib.parse import urlparse, parse_qs
 
+from .browser_cookies import browser_cookies
 from .hls import HLSDownloader
 
 VIDEO_DOMAINS = [
@@ -50,7 +51,13 @@ TRANSIENT_ERRORS = (
 
 # The reasons a user can act on, in their words (checked in order; the first match wins)
 FAILURE_MESSAGES = (
-    (("sign in to confirm", "not a bot"), "يوتيوب طلب التأكد إنك مش برنامج آلي. استنى شوية وجرّب تاني."),
+    (("not a bot",),  # "Sign in to confirm you're not a bot" (not "...confirm your age")
+     "يوتيوب طلب التأكد إنك مش برنامج آلي. استنى شوية وجرّب تاني، أو ابعته من إضافة OpenHydro في المتصفح وانت مسجّل دخول."),
+    # yt-dlp's own advice for these ends with "--cookies": the browser extension shares them
+    (("confirm your age", "age-restricted", "inappropriate for some users", "members-only", "join this channel",
+      "login required", "log in to", "sign in to view", "sign in if you", "requires authentication",
+      "registered users", "--cookies"),
+     "الفيديو ده مش متاح غير لحساب مسجّل دخول: افتحه في المتصفح وانت مسجّل دخول وابعته من إضافة OpenHydro."),
     (("private video", "video is private", "video unavailable", "has been removed", "no longer available",
       "account associated with this video has been terminated"), "الفيديو ده مش متاح: اتمسح أو بقى خاص."),
     (("requested format is not available",), "الجودة اللي اخترتها مش متاحة للفيديو ده. جرّب جودة تانية."),
@@ -59,13 +66,19 @@ FAILURE_MESSAGES = (
 )
 
 
+def is_transient(reason: str) -> bool:
+    """The connection failed, not the video: worth another try later."""
+    text = reason.lower()
+    return any(marker in text for marker in TRANSIENT_ERRORS)
+
+
 class VideoDownloadError(Exception):
     """yt-dlp could not download the video: `message` is for the user; `transient` means try again later."""
 
     def __init__(self, reason: str):
         super().__init__(reason)
         text = reason.lower()
-        self.transient = any(marker in text for marker in TRANSIENT_ERRORS)
+        self.transient = is_transient(reason)
         known = next((msg for markers, msg in FAILURE_MESSAGES if any(m in text for m in markers)), None)
         if known:
             self.message = known
@@ -197,8 +210,11 @@ class VideoExtractor:
             "skip_download": True,
         }
 
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
+        def extract(extra: Dict) -> Dict:
+            with yt_dlp.YoutubeDL({**ydl_opts, **extra}) as ydl:
+                return ydl.extract_info(url, download=False)
+
+        info, _ = cls._with_browser_cookies(url, extract)  # e.g. a private playlist
 
         title = info.get("title") or "Playlist"
         title_sanitized = re.sub(r'[\\/*?:"<>|]', "_", title).strip() or "Playlist"
@@ -241,10 +257,10 @@ class VideoExtractor:
     INFO_CACHE_SECONDS = 15 * 60
 
     @classmethod
-    def _remember_info(cls, url: str, info: Dict):
+    def _remember_info(cls, url: str, info: Dict, signed_in: bool = False):
         now = time.time()
         cls._info_cache = {u: e for u, e in cls._info_cache.items() if now - e[0] < cls.INFO_CACHE_SECONDS}
-        cls._info_cache[url] = (now, info)
+        cls._info_cache[url] = (now, info, signed_in)
 
     @classmethod
     def _recent_info(cls, url: str) -> Optional[Dict]:
@@ -252,6 +268,34 @@ class VideoExtractor:
         if entry and time.time() - entry[0] < cls.INFO_CACHE_SECONDS:
             return entry[1]
         return None
+
+    @classmethod
+    def _needed_cookies(cls, url: str) -> bool:
+        """The video was only found signed in (with the browser's cookies): its download needs them too."""
+        entry = cls._info_cache.get(url)
+        return bool(entry and len(entry) > 2 and entry[2])
+
+    @staticmethod
+    def _with_browser_cookies(url: str, attempt: Callable[[Dict], Any], signed_in: bool = False) -> Tuple[Any, bool]:
+        """
+        attempt(extra yt-dlp options) as a visitor first, the way it always ran. If that fails for another
+        reason than the connection and the browser extension shared cookies for the site, once more with
+        them: the video may need the user signed in (private, age-restricted, members only, or YouTube's
+        "confirm you're not a bot"). Cookies are never used when they are not needed: a signed-in yt-dlp
+        can see other formats than a visitor, and YouTube does not like accounts used by programs.
+        signed_in: already known to need them (its extraction did). Returns (result, cookies used).
+        """
+        if not signed_in:
+            try:
+                return attempt({}), False
+            except Exception as e:
+                if is_transient(str(e)) or not browser_cookies.has_cookies(url):
+                    raise
+                print(f"[VideoExtractor] Failed as a visitor ({e}); trying again with the browser's cookies")
+        cookies = browser_cookies.cookie_file(url)
+        if cookies is None:  # gone since (the setting was turned off)
+            return attempt({}), False
+        return attempt({"cookiefile": cookies}), True
 
     @classmethod
     def _sync_extract(cls, url: str) -> Dict:
@@ -272,9 +316,12 @@ class VideoExtractor:
                 },
             }
 
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.sanitize_info(ydl.extract_info(url, download=False))
-            cls._remember_info(url, info)
+            def extract(extra: Dict) -> Dict:
+                with yt_dlp.YoutubeDL({**ydl_opts, **extra}) as ydl:
+                    return ydl.sanitize_info(ydl.extract_info(url, download=False))
+
+            info, signed_in = cls._with_browser_cookies(url, extract)
+            cls._remember_info(url, info, signed_in)
 
         title = info.get("title", "video")
         title_sanitized = re.sub(r'[\\/*?:"<>|]', "_", title)
@@ -569,9 +616,12 @@ class VideoExtractor:
                 "js_runtimes": JS_RUNTIMES,
                 "no_warnings": True,
             }
-            try:
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            def fetch_subtitles(extra: Dict):
+                with yt_dlp.YoutubeDL({**ydl_opts, **extra}) as ydl:
                     ydl.download([url])
+
+            try:
+                cls._with_browser_cookies(url, fetch_subtitles, signed_in=cls._needed_cookies(url))
             except Exception as e:
                 print(f"[VideoExtractor] Subtitle download failed: {e}")
                 return None
@@ -636,8 +686,8 @@ class VideoExtractor:
             }
             expected_exts = VIDEO_EXTS
 
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        def fetch(extra: Dict):
+            with yt_dlp.YoutubeDL({**ydl_opts, **extra}) as ydl:
                 info = cls._recent_info(url)
                 if info is None:
                     ydl.download([url])
@@ -649,6 +699,9 @@ class VideoExtractor:
                     except yt_dlp.utils.DownloadError:
                         cls._info_cache.pop(url, None)  # links expired: extract afresh
                         ydl.download([url])
+
+        try:
+            cls._with_browser_cookies(url, fetch, signed_in=cls._needed_cookies(url))
             return cls._locate_output(out_base, expected_exts)
         except Exception as e:
             print(f"[VideoExtractor] Download failed ({format_selector}): {e}")
